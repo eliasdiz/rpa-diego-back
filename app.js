@@ -1,7 +1,7 @@
 import express from 'express'
 import path from 'path';
 import 'dotenv/config.js'
-// import './config/database.js'
+import './config/socket.js'
 import cookieParser from 'cookie-parser';
 import logger from 'morgan'
 import { __dirname } from './utils.js'

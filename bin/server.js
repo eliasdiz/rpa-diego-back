@@ -7,6 +7,7 @@ import app from '../app.js';
 import debug from 'debug';
 import http from 'http'
 const logger = debug('rpa-diego-back:server')
+import { createSocketServer } from '../config/socket.js';
 
 /**
  * Get port from environment and store in Express.
@@ -20,6 +21,7 @@ app.set('port', port);
  */
 
 const server = http.createServer(app);
+createSocketServer(server)
 
 /**
  * Listen on provided port, on all network interfaces.

@@ -28,7 +28,10 @@ export async function automatizar(socket, setBrowser) {
 		}
 
 		// Lanzar navegador
-		const browser = await puppeteer.launch({ headless: false });
+		const browser = await puppeteer.launch({
+			headless: true,  // Ejecutar en modo headless (sin UI)
+			args: ['--no-sandbox', '--disable-setuid-sandbox'], // Requerido en algunos servidores
+		});
 		setBrowser(browser);  // Pasamos la instancia de navegador al servidor para poder detenerlo luego
 		const page = await browser.newPage();
 		const timeout = 10000;  // Timeout de 10 segundos

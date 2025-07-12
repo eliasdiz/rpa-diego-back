@@ -8,6 +8,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const configPath = path.join(__dirname, 'config.json');
 
+let browser = null;  // Para almacenar la instancia del navegador
+
 export function createSocketServer(server) {
 	const io = new Server(server, {
 		cors: {
@@ -35,9 +37,23 @@ export function createSocketServer(server) {
 			}
 		});
 
+		// Iniciar la automatización
 		socket.on('iniciar-automatizacion', () => {
 			console.log('🚀 Iniciando automatización...');
-			automatizar(socket);
+			automatizar(socket, (newBrowser) => {
+				// Guardamos el navegador para poder cerrarlo luego
+				browser = newBrowser;
+			});
+		});
+
+		// Detener la automatización
+		socket.on('detener-automatizacion', () => {
+			console.log('🚫 Deteniendo automatización...');
+			if (browser) {
+				browser.close();  // Cerrar el navegador si está abierto
+				browser = null;  // Limpiar la instancia del navegador
+			}
+			socket.emit('automatizacion-detenida');
 		});
 	});
 }

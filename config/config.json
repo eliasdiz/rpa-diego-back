@@ -1,11 +1,7 @@
 {
   "email": "diego.alvarez@asesorsura.com",
   "passwordHash": "Pauli1278#$%",
-<<<<<<< HEAD
-  "cantidad": 4,
-=======
   "cantidad": 3,
->>>>>>> b77a30b612f1200427214059429e7980fb058c8f
   "contador": 0,
   "hora": "09:00",
   "modo": "manual"

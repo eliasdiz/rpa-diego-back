@@ -13,8 +13,8 @@ let browser = null;  // Para almacenar la instancia del navegador
 export function createSocketServer(server) {
 	const io = new Server(server, {
 		cors: {
-			origin: 'https://aut-diego.netlify.app',
-			// origin: 'http://localhost:5173',
+			// origin: 'https://aut-diego.netlify.app',
+			origin: 'http://localhost:5173',
 			methods: ['GET', 'POST'],
 		},
 	});

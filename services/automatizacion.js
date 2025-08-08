@@ -185,7 +185,8 @@
 // }
 
 
-import puppeteer from 'puppeteer';
+// import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -220,10 +221,15 @@ export async function automatizar(socket, setBrowser) {
         }
 
         // 1. Iniciar navegador
-        browser = await puppeteer.launch({
-            // headless: false,
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        // browser = await puppeteer.launch({
+        //     // headless: false,
+        //     headless: true,
+        //     args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        // });
+
+        browser = await puppeteer.connect({
+            browserURL: 'http://localhost:9222',
+            defaultViewport: null,
         });
         setBrowser(browser);
         const page = await browser.newPage();
@@ -231,25 +237,25 @@ export async function automatizar(socket, setBrowser) {
         page.setDefaultTimeout(15000);
 
         // 2. Login
-        await page.goto('https://sura.my.salesforce.com/?ec=302&startURL=%2F00QRO00000K1XUg');
-        await page.type('#username', email);
-        await page.type('#password', passwordHash);
-        await Promise.all([page.waitForNavigation(), page.click('#Login')]);
+        // await page.goto('https://sura.my.salesforce.com/?ec=302&startURL=%2F00QRO00000K1XUg');
+        // await page.type('#username', email);
+        // await page.type('#password', passwordHash);
+        // await Promise.all([page.waitForNavigation(), page.click('#Login')]);
 
-        if (await page.$('#error')) {
-            throw { message: 'Error en credenciales', etapa: 'login' };
-        }
+        // if (await page.$('#error')) {
+        //     throw { message: 'Error en credenciales', etapa: 'login' };
+        // }
 
-        console.log("🔐 Esperando verificación en dos pasos...");
-        await new Promise(resolve => setTimeout(resolve, 32000));
+        // console.log("🔐 Esperando verificación en dos pasos...");
+        // await new Promise(resolve => setTimeout(resolve, 32000));
 
-        // 3. Verificar 2FA
-        if (await page.$('input[value="Verificar"][title="Verificar"]') || !(await page.$('div.oneAppNavContainer'))) {
-            throw { message: 'Falló autenticación en dos pasos', etapa: 'login' };
-        }
+        // // 3. Verificar 2FA
+        // if (await page.$('input[value="Verificar"][title="Verificar"]') || !(await page.$('div.oneAppNavContainer'))) {
+        //     throw { message: 'Falló autenticación en dos pasos', etapa: 'login' };
+        // }
 
-        socket.emit('login-exitoso');
-        console.log('✅ Login exitoso');
+        // socket.emit('login-exitoso');
+        // console.log('✅ Login exitoso');
 
         // 4. Navegar a prospectos
         await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0' });

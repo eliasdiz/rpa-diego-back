@@ -1,4 +1,5 @@
-// import puppeteer from 'puppeteer';
+// // import puppeteer from 'puppeteer';
+// import puppeteer from 'puppeteer-core';
 // import fs from 'fs';
 // import path from 'path';
 // import { fileURLToPath } from 'url';
@@ -7,189 +8,192 @@
 // const __dirname = path.dirname(__filename);
 // const configPath = path.join(__dirname, '../config/config.json');
 
+// // Constantes
+// const SOLUCIONES_VALIDAS = [
+//     'Plan vive',
+//     'Salud familiar',
+//     'Salud evoluciona familiar',
+//     'Plan crédito protegido'
+// ];
+// const PROSPECTOS_URL = 'https://sura.lightning.force.com/lightning/o/Lead/list?filterName=Antioquia_PYF_Lead';
+
 // export async function automatizar(socket, setBrowser) {
-// 	try {
-// 		// Leer configuración
-// 		const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-// 		let { email, passwordHash, cantidad, contador } = config;
+//     let browser;
+//     try {
+//         // Leer configuración
+//         const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+//         const { email, passwordHash, cantidad, contador = 0 } = config;
 
-// 		// Verificar credenciales
-// 		if (!email || !passwordHash) {
-// 			console.log("❌ Credenciales no configuradas correctamente");
-// 			socket.emit('login-fallido', 'Credenciales incorrectas');
-// 			return; // Detener la automatización
-// 		}
+//         // Validaciones iniciales
+//         if (!email || !passwordHash) {
+//             throw new Error('Credenciales no configuradas en config.json');
+//         }
 
-// 		// Verificar cantidad de prospectos
-// 		if (!cantidad || cantidad <= 0) {
-// 			console.log("❌ Cantidad de prospectos no configurada correctamente");
-// 			socket.emit('login-fallido', 'Cantidad de prospectos no válida');
-// 			return; // Detener la automatización
-// 		}
+//         if (!cantidad || cantidad <= 0) {
+//             throw new Error('Cantidad de prospectos no válida en config.json');
+//         }
 
-// 		// Lanzar navegador
-// 		const browser = await puppeteer.launch({
-// 			headless: true,  // Ejecutar en modo headless (sin UI)
-// 			args: ['--no-sandbox', '--disable-setuid-sandbox'], // Requerido en algunos servidores
-// 		});
-// 		setBrowser(browser);  // Pasamos la instancia de navegador al servidor para poder detenerlo luego
-// 		const page = await browser.newPage();
-// 		const timeout = 10000;  // Timeout de 10 segundos
-// 		page.setDefaultTimeout(timeout);
+//         // 1. Iniciar navegador
 
-// 		// Configuramos el tamaño del viewport
-// 		await page.setViewport({ width: 1440, height: 900 });
+//         // browser = await puppeteer.connect({
+//         //     // headless: false,
+//         //     // headless: true,
+//         //     // args: ['--no-sandbox', '--disable-setuid-sandbox'],
+//         //     // headless: false,
+//         //     // userDataDir: 'C:/Users/Usuario/AppData/Local/Google/Chrome/User Data',
+//         //     // args: ['--no-sandbox', '--disable-setuid-sandbox', '--start-maximized'],
+//         //     browserURL: 'http://localhost:9222/json',
+//         // });
 
-// 		// Ir al login de Salesforce
-// 		await page.goto('https://sura.my.salesforce.com/?ec=302&startURL=%2F00QRO00000K1XUg');
+//         browser = await puppeteer.connect({
+//             browserURL: 'http://localhost:9222',
+//             defaultViewport: null,
+//         });
+//         setBrowser(browser);
+//         // const pages = await browser.pages();
+//         const page = await browser.newPage();
 
-// 		await page.waitForSelector('#username', { timeout });
-// 		await page.type('#username', email);
+//         // setBrowser(browser);
+//         // const page = await browser.newPage();
+//         // await page.setViewport({ width: 1440, height: 900 });
+//         // page.setDefaultTimeout(15000);
 
-// 		await page.waitForSelector('#password', { timeout });
-// 		await page.type('#password', passwordHash);
+//         // 2. Login
+//         // await page.goto('https://sura.my.salesforce.com/?ec=302&startURL=%2F00QRO00000K1XUg');
+//         // await page.type('#username', email);
+//         // await page.type('#password', passwordHash);
+//         // await Promise.all([page.waitForNavigation(), page.click('#Login')]);
 
-// 		await Promise.all([page.waitForNavigation(), page.click('#Login')]);
+//         // if (await page.$('#error')) {
+//         //     throw { message: 'Error en credenciales', etapa: 'login' };
+//         // }
 
-// 		// Verificar si hay un mensaje de error de login
-// 		const errorMessage = await page.$('#error');
-// 		if (errorMessage) {
-// 			console.log('❌ Error en las credenciales: Email o contraseña incorrectos');
-// 			socket.emit('login-fallido', 'Error en las credenciales: Email o contraseña incorrectos');
-// 			await browser.close();
-// 			return;  // Detener la automatización
-// 		}
+//         // console.log("🔐 Esperando verificación en dos pasos...");
+//         // await new Promise(resolve => setTimeout(resolve, 32000));
 
-// 		console.log("🔐 Esperando verificación en dos pasos...");
-// 		await new Promise(resolve => setTimeout(resolve, 32000));  // Esperar 32 segundos
+//         // // 3. Verificar 2FA
+//         // if (await page.$('input[value="Verificar"][title="Verificar"]') || !(await page.$('div.oneAppNavContainer'))) {
+//         //     throw { message: 'Falló autenticación en dos pasos', etapa: 'login' };
+//         // }
 
-// 		// Verificar si sigue en pantalla de verificación 2FA
-// 		const estaEnVerificacion = await page.$('input[value="Verificar"][title="Verificar"]');
-// 		const estaEnHome = await page.$('div.oneAppNavContainer');
+//         // socket.emit('login-exitoso');
+//         // console.log('✅ Login exitoso');
 
-// 		if (estaEnVerificacion) {
-// 			console.log('❌ Falló la autenticación en dos pasos');
-// 			socket.emit('login-fallido', 'Autenticación en dos pasos no completada');
-// 			await browser.close();
-// 			return;
-// 		}
+//         // 4. Navegar a prospectos
+//         await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0' });
+//         let prospectosCambiados = contador;
 
-// 		if (!estaEnHome) {
-// 			console.log('❌ No se detectó acceso al home, login posiblemente fallido');
-// 			socket.emit('login-fallido', 'No se detectó acceso al home');
-// 			await browser.close();
-// 			return;
-// 		}
+//         // 5. Bucle principal
+//         while (prospectosCambiados < cantidad) {
+//             console.log(`🔄 Buscando leads (${prospectosCambiados}/${cantidad})...`);
+//             await page.reload({ waitUntil: 'networkidle0' });
 
-// 		socket.emit('login-exitoso');
-// 		console.log('✅ Login exitoso');
+//             const tablaLeads = await page.$('table[aria-label="Antioquia - PYF"]');
+//             if (!tablaLeads) {
+//                 console.log('❌ No hay leads disponibles. Esperando...');
+//                 await new Promise(resolve => setTimeout(resolve, 5000));
+//                 continue;
+//             }
 
-// 		// Ir a la pestaña de prospectos y aplicar el filtro "Antioquia PYF"
-// 		await page.goto('https://sura.lightning.force.com/lightning/o/Lead/list?filterName=Antioquia_PYF_Lead', { waitUntil: 'networkidle2' });
+//             const leads = await page.$$('table tbody tr');
+//             for (const lead of leads) {
+//                 try {
+//                     // 5.1 Validar estado
+//                     const estado = await lead.$eval(
+//                         'td[data-label="Estado de prospecto"] span',
+//                         el => el.textContent.trim()
+//                     ).catch(() => '');
 
-// 		let prospectosContados = 0; // Inicializar en 0
+//                     if (estado === 'Abierto') {
+//                         console.log('⏩ Lead ya abierto. Saltando...');
+//                         continue;
+//                     }
 
-// 		// Comenzar a buscar leads cada 5 segundos
-// 		while (prospectosContados < cantidad) {
-// 			console.log(`🔄 Buscando nuevos leads... (Prospectos encontrados: ${prospectosContados}/${cantidad})`);
+//                     // 5.2 Abrir lead
+//                     const nombreLead = await lead.$('a.slds-truncate[href^="/lightning/r/"]');
+//                     if (!nombreLead) continue;
 
-// 			// Recargar la página para obtener los últimos leads
-// 			await page.reload({ waitUntil: 'networkidle2' });
+//                     await Promise.all([
+//                         nombreLead.click(),
+//                         page.waitForNavigation({ waitUntil: 'networkidle0' }).catch(() => {})
+//                     ]);
 
-// 			// Verificar si hay leads en la tabla
-// 			const leads = await page.$$('table tbody tr');
-// 			if (leads.length > 0) {
-// 				for (const lead of leads) {
-// 					// Hacer clic en el nombre del lead para acceder a la página de detalle
-// 					const leadName = await lead.$('th > span span');
-// 					if (leadName) {
-// 						await leadName.click();
+//                     // 5.3 Validar botón cambio propietario
+//                     const buttonChange = await page.waitForSelector('button[name="ChangeOwnerOne"]', { timeout: 5000 })
+//                         .catch(() => { throw { message: 'Botón no encontrado', etapa: 'validacion-boton' } });
 
-// 						// Verificar si la solución es válida
-// 						const solucion = await page.$('div[data-label="Solución"]');  // Modificar este selector según lo que encuentres en la página
+//                     // 5.4 Validar solución
+//                     const solucionTexto = await page.$eval(
+//                         'records-highlights-details-item p[title="Solución"] + p force-lookup a span',
+//                         el => el.textContent.trim()
+//                     ).catch(() => '');
 
-// 						// Obtener el texto de la solución
-// 						const solucionTexto = await page.evaluate(el => el ? el.textContent.trim() : '', solucion);
+//                     if (!SOLUCIONES_VALIDAS.includes(solucionTexto)) {
+//                         throw { message: `Solución no válida: ${solucionTexto}`, etapa: 'validacion-solucion' };
+//                     }
 
-// 						// Validar si la solución está en la lista de soluciones válidas
-// 						const solucionesValidas = [
-// 							'Plan vive',
-// 							'Salud familiar',
-// 							'Salud evoluciona familiar',
-// 							'Plan crédito protegido'
-// 						];
+//                     // 5.5 Cambiar propietario
+//                     console.log('✅ Iniciando cambio de propietario...');
+//                     await buttonChange.click();
 
-// 						if (solucionesValidas.includes(solucionTexto)) {
-// 							// Si la solución es válida, buscar el botón de cambio de propietario
-// 							const buttonChange = await page.waitForSelector('button[name="ChangeOwnerOne"]', { timeout: 3000 }).catch(() => null);
-// 							if (buttonChange) {
-// 								console.log('✅ Cambio de propietario disponible. Cambiando propietario...');
+//                     const modal = await page.waitForSelector('div[role="dialog"]', { timeout: 5000 })
+//                         .catch(() => { throw { message: 'Modal no apareció', etapa: 'cambio-propietario' } });
 
-// 								// Hacer clic en el botón de cambio de propietario
-// 								await buttonChange.click();
+//                     await page.type('input[title="Buscar Usuarios"]', 'Diego Ignacio Alvarez Franco', { delay: 100 });
+//                     await page.click('div[title="Diego Ignacio Alvarez Franco"]');
+//                     await page.click('button[title="Enviar"]');
 
-// 								// Esperar el modal de cambio de propietario
-// 								const modal = await page.waitForSelector('div[role="dialog"]');
-// 								if (modal) {
-// 									const inputChange = await page.waitForSelector('input[title="Buscar Usuarios"]');
-// 									await inputChange?.click();
+//                     // 5.6 Verificar éxito
+//                     await page.waitForTimeout(2000);
+//                     if (await page.$('div[role="dialog"]')) {
+//                         throw { message: 'Error en cambio de propietario', etapa: 'cambio-propietario' };
+//                     }
 
-// 									const diego = await page.waitForSelector('div[title="Diego Ignacio Alvarez Franco"]');
-// 									await diego?.click();
+//                     prospectosCambiados++;
+//                     console.log(`✅ Cambio exitoso! Total: ${prospectosCambiados}`);
+//                     socket.emit('update-leads', { count: prospectosCambiados });
 
-// 									const enviar = await page.waitForSelector('button[title="Enviar"]');
-// 									await enviar?.click();
+//                 } catch (error) {
+//                     console.error(`⚠️ Error: ${error.message}`);
+//                     socket.emit('error-automatizacion', error);
+//                 } finally {
+//                     // Siempre volver a la lista
+//                     await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0' });
+//                 }
 
-// 									// Verificar si hubo un error
-// 									const modalError = await page.$('div[class="modalError"]') !== null;
-// 									if (modalError) {
-// 										const errorMessageElement = await page.$('.changeOwnerErrorMessage');
-// 										const errorMessage = await page.evaluate(el => el?.textContent, errorMessageElement);
-// 										console.log(`❌ Error en el cambio de propietario: ${errorMessage}`);
-// 									} else {
-// 										prospectosContados += 1;
-// 										console.log(`✅ Cambio de propietario realizado correctamente. Prospectos: ${prospectosContados}`);
-// 										socket.emit('update-leads', { count: prospectosContados });
-// 									}
-// 								}
-// 							}
-// 						} else {
-// 							console.log(`❌ Lead con solución ${solucionTexto} no cumple con la validación. Regresando a prospectos...`);
-// 						}
+//                 if (prospectosCambiados >= cantidad) break;
+//             }
 
-// 						// Volver a la página de prospectos
-// 						await page.goto('https://sura.lightning.force.com/lightning/o/Lead/list?filterName=Antioquia_PYF_Lead', { waitUntil: 'networkidle2' });
-// 					}
-// 				}
-// 			} else {
-// 				console.log('❌ No se encontraron leads nuevos.');
-// 			}
+//             await new Promise(resolve => setTimeout(resolve, 5000));
+//         }
 
-// 			// Si ya se alcanzó la cantidad de prospectos, detener la automatización
-// 			if (prospectosContados >= cantidad) {
-// 				console.log('✅ Se alcanzó la cantidad deseada de cambios de propietario. Deteniendo la automatización.');
-// 				socket.emit('automatizacion-detenida');
-// 				break;
-// 			}
+//         // Actualización final
+//         config.contador = prospectosCambiados;
+//         fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 
-// 			// Esperar 5 segundos antes de la siguiente recarga
-// 			await new Promise(resolve => setTimeout(resolve, 5000));
-// 		}
+//         console.log('✅ Automatización completada!');
+//         socket.emit('automatizacion-detenida');
 
-// 		await browser.close();
-
-// 	} catch (error) {
-// 		console.error('❌ Error en automatización:', error.message);
-// 		socket.emit('login-fallido', error.message);
-// 	}
+//     } catch (error) {
+//         console.error('❌ Error crítico:', error.message);
+//         socket.emit('error-automatizacion', {
+//             message: error.message,
+//             etapa: error.etapa || 'general'
+//         });
+//     } finally {
+//         if (browser) await browser.close();
+//     }
 // }
 
 
-// import puppeteer from 'puppeteer';
+
+
+
 import puppeteer from 'puppeteer-core';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { format } from '@formkit/tempo';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -197,168 +201,187 @@ const configPath = path.join(__dirname, '../config/config.json');
 
 // Constantes
 const SOLUCIONES_VALIDAS = [
-    'Plan vive',
-    'Salud familiar',
-    'Salud evoluciona familiar',
-    'Plan crédito protegido'
+	'Plan vive',
+	'Salud familiar',
+	'Salud evoluciona familiar',
+	'Plan crédito protegido'
 ];
+
+// Función para hora actual (formato HH:MM:SS)
+const horaActual = () => format(new Date(),{ time: 'short'})
+
 const PROSPECTOS_URL = 'https://sura.lightning.force.com/lightning/o/Lead/list?filterName=Antioquia_PYF_Lead';
 
 export async function automatizar(socket, setBrowser) {
-    let browser;
-    try {
-        // Leer configuración
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        const { email, passwordHash, cantidad, contador = 0 } = config;
+	let browser;
+	try {
+		// Leer configuración
+		const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+		const { email, passwordHash, cantidad, contador = 0 } = config;
 
-        // Validaciones iniciales
-        if (!email || !passwordHash) {
-            throw new Error('Credenciales no configuradas en config.json');
-        }
+		// Validaciones iniciales
+		if (!email || !passwordHash) {
+			throw new Error('Credenciales no configuradas en config.json');
+		}
 
-        if (!cantidad || cantidad <= 0) {
-            throw new Error('Cantidad de prospectos no válida en config.json');
-        }
+		if (!cantidad || cantidad <= 0) {
+			throw new Error('Cantidad de prospectos no válida en config.json');
+		}
 
-        // 1. Iniciar navegador
-        // browser = await puppeteer.launch({
-        //     // headless: false,
-        //     headless: true,
-        //     args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        // });
+		// 1. Iniciar navegador
+		browser = await puppeteer.connect({
+			browserURL: 'http://localhost:9222',
+			defaultViewport: null,
+		});
+		setBrowser(browser);
+		const page = await browser.newPage();
 
-        browser = await puppeteer.connect({
-            browserURL: 'http://localhost:9222',
-            defaultViewport: null,
-        });
-        setBrowser(browser);
-        const page = await browser.newPage();
-        await page.setViewport({ width: 1440, height: 900 });
-        page.setDefaultTimeout(15000);
 
-        // 2. Login
-        // await page.goto('https://sura.my.salesforce.com/?ec=302&startURL=%2F00QRO00000K1XUg');
-        // await page.type('#username', email);
-        // await page.type('#password', passwordHash);
-        // await Promise.all([page.waitForNavigation(), page.click('#Login')]);
 
-        // if (await page.$('#error')) {
-        //     throw { message: 'Error en credenciales', etapa: 'login' };
-        // }
+		// 2. Navegar a prospectos
+		await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0' });
+		let prospectosCambiados = contador;
 
-        // console.log("🔐 Esperando verificación en dos pasos...");
-        // await new Promise(resolve => setTimeout(resolve, 32000));
+		console.log(`🚀 Iniciando automatización para ${cantidad} prospectos...`,horaActual());
 
-        // // 3. Verificar 2FA
-        // if (await page.$('input[value="Verificar"][title="Verificar"]') || !(await page.$('div.oneAppNavContainer'))) {
-        //     throw { message: 'Falló autenticación en dos pasos', etapa: 'login' };
-        // }
+		// 3. Bucle principal
+		while (prospectosCambiados < cantidad) {
+			// Recarga silenciosa
+			await page.reload({ waitUntil: 'networkidle0' });
 
-        // socket.emit('login-exitoso');
-        // console.log('✅ Login exitoso');
+			const tablaLeads = await page.$('table[aria-label="Antioquia - PYF"]');
+			if (!tablaLeads) {
+				await new Promise(resolve => setTimeout(resolve, 5000));
+				continue;
+			}
 
-        // 4. Navegar a prospectos
-        await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0' });
-        let prospectosCambiados = contador;
+			const leads = await page.$$('table tbody tr');
+			let procesandoLead = false;
 
-        // 5. Bucle principal
-        while (prospectosCambiados < cantidad) {
-            console.log(`🔄 Buscando leads (${prospectosCambiados}/${cantidad})...`);
-            await page.reload({ waitUntil: 'networkidle0' });
+			for (const lead of leads) {
+				try {
+					// 3.1 Validar estado (silencioso)
+					const estado = await lead.$eval(
+						'td[data-label="Estado de prospecto"] span',
+						el => el.textContent.trim()
+					).catch(() => '');
 
-            const tablaLeads = await page.$('table[aria-label="Antioquia - PYF"]');
-            if (!tablaLeads) {
-                console.log('❌ No hay leads disponibles. Esperando...');
-                await new Promise(resolve => setTimeout(resolve, 5000));
-                continue;
-            }
+					if (estado === 'Abierto') continue;
 
-            const leads = await page.$$('table tbody tr');
-            for (const lead of leads) {
-                try {
-                    // 5.1 Validar estado
-                    const estado = await lead.$eval(
-                        'td[data-label="Estado de prospecto"] span',
-                        el => el.textContent.trim()
-                    ).catch(() => '');
+					// 3.2 Procesar nuevo lead (aquí activamos los logs)
+					procesandoLead = true;
+					console.log(`\n🔍 [${horaActual()}] Analizando nuevo lead (${prospectosCambiados + 1}/${cantidad})...`);
 
-                    if (estado === 'Abierto') {
-                        console.log('⏩ Lead ya abierto. Saltando...');
-                        continue;
-                    }
+					// Abrir lead
+					const nombreLead = await lead.$('a.slds-truncate[href^="/lightning/r/"]');
+					if (!nombreLead) continue;
 
-                    // 5.2 Abrir lead
-                    const nombreLead = await lead.$('a.slds-truncate[href^="/lightning/r/"]');
-                    if (!nombreLead) continue;
+					await Promise.all([
+						nombreLead.click(),
+						page.waitForNavigation({ waitUntil: 'networkidle0' }).catch(() => { })
+					]);
 
-                    await Promise.all([
-                        nombreLead.click(),
-                        page.waitForNavigation({ waitUntil: 'networkidle0' }).catch(() => {})
-                    ]);
+					// 3.3 Validar botón cambio propietario (versión robusta)
+					const buttonChange = await page.waitForSelector('button[name="ChangeOwnerOne"]', { timeout: 3000 }).catch(() => null);
 
-                    // 5.3 Validar botón cambio propietario
-                    const buttonChange = await page.waitForSelector('button[name="ChangeOwnerOne"]', { timeout: 5000 })
-                        .catch(() => { throw { message: 'Botón no encontrado', etapa: 'validacion-boton' } });
+					if (!buttonChange) {
+						console.log(`⚠️ [${horatual}] Botón no encontrado. Saltando lead...`);
+						socket.emit('error-automatizacion', {
+							message: 'Botón no encontrado',
+							etapa: 'validacion-boton'
+						});
+						continue;
+					}
 
-                    // 5.4 Validar solución
-                    const solucionTexto = await page.$eval(
-                        'records-highlights-details-item p[title="Solución"] + p force-lookup a span',
-                        el => el.textContent.trim()
-                    ).catch(() => '');
+					// 3.4 Validar solución
+					const solucionTexto = await page.$eval(
+						'records-highlights-details-item p[title="Solución"] + p force-lookup a span',
+						el => el.textContent.trim()
+					).catch(() => '');
 
-                    if (!SOLUCIONES_VALIDAS.includes(solucionTexto)) {
-                        throw { message: `Solución no válida: ${solucionTexto}`, etapa: 'validacion-solucion' };
-                    }
+					if (!SOLUCIONES_VALIDAS.includes(solucionTexto)) {
+						console.log(`❌ [${horaActual()}] Solución no válida: ${solucionTexto}`);
+						socket.emit('error-automatizacion', {
+							message: `Solución no válida: ${solucionTexto}`,
+							etapa: 'validacion-solucion'
+						});
+						continue;
+					}
 
-                    // 5.5 Cambiar propietario
-                    console.log('✅ Iniciando cambio de propietario...');
-                    await buttonChange.click();
+					// 3.5 Cambio de propietario (versión robusta)
+					console.log(`🔄 [${horaActual()}] Cambiando propietario...`);
+					await buttonChange.click().catch(() => null);
 
-                    const modal = await page.waitForSelector('div[role="dialog"]', { timeout: 5000 })
-                        .catch(() => { throw { message: 'Modal no apareció', etapa: 'cambio-propietario' } });
+					const modal = await page.waitForSelector('div[role="dialog"]', { timeout: 5000 }).catch(() => null);
+					if (modal) {
+						// Paso 1: Buscar usuario
+						const inputChange = await page.waitForSelector('input[title="Buscar Usuarios"]').catch(() => null);
+						await inputChange?.click();
+						await inputChange?.type('Diego Ignacio Alvarez Franco', { delay: 100 });
 
-                    await page.type('input[title="Buscar Usuarios"]', 'Diego Ignacio Alvarez Franco', { delay: 100 });
-                    await page.click('div[title="Diego Ignacio Alvarez Franco"]');
-                    await page.click('button[title="Enviar"]');
+						// Paso 2: Seleccionar usuario
+						const diego = await page.waitForSelector('div[title="Diego Ignacio Alvarez Franco"]').catch(() => null);
+						await diego?.click();
 
-                    // 5.6 Verificar éxito
-                    await page.waitForTimeout(2000);
-                    if (await page.$('div[role="dialog"]')) {
-                        throw { message: 'Error en cambio de propietario', etapa: 'cambio-propietario' };
-                    }
+						// Paso 3: Confirmar
+						const enviar = await page.waitForSelector('button[title="Enviar"]').catch(() => null);
+						await enviar?.click();
 
-                    prospectosCambiados++;
-                    console.log(`✅ Cambio exitoso! Total: ${prospectosCambiados}`);
-                    socket.emit('update-leads', { count: prospectosCambiados });
+						// Verificación de errores
+						await page.waitForTimeout(2000);
+						const modalError = await page.$('div[class="modalError"]');
 
-                } catch (error) {
-                    console.error(`⚠️ Error: ${error.message}`);
-                    socket.emit('error-automatizacion', error);
-                } finally {
-                    // Siempre volver a la lista
-                    await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0' });
-                }
+						if (modalError) {
+							const errorMsg = await page.$eval('.changeOwnerErrorMessage', el => el.textContent?.trim()).catch(() => 'Error desconocido');
+							console.log(`❌ [${horaActual()}] Error en cambio: ${errorMsg}`);
+							socket.emit('error-automatizacion', {
+								message: errorMsg,
+								etapa: 'cambio-propietario'
+							});
+						} else {
+							// Éxito
+							prospectosCambiados++;
+							console.log(`✅ [${horaActual()}] Cambio exitoso! Total: ${prospectosCambiados}`);
+							socket.emit('update-leads', { count: prospectosCambiados });
+						}
+					} else {
+						console.log(`⚠️ [${horaActual()}] Modal no apareció`);
+						socket.emit('error-automatizacion', {
+							message: 'Modal no apareció',
+							etapa: 'cambio-propietario'
+						});
+					}
 
-                if (prospectosCambiados >= cantidad) break;
-            }
+				} catch (error) {
+					console.error(`⚠️ [${horaActual()}] Error: ${error.message}`);
+					socket.emit('error-automatizacion', error);
+				} finally {
+					await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0' });
+				}
 
-            await new Promise(resolve => setTimeout(resolve, 5000));
-        }
+				if (prospectosCambiados >= cantidad) break;
+			}
 
-        // Actualización final
-        config.contador = prospectosCambiados;
-        fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+			// Espera silenciosa si no se procesaron leads
+			if (!procesandoLead) {
+				await new Promise(resolve => setTimeout(resolve, 5000));
+			}
+		}
 
-        console.log('✅ Automatización completada!');
-        socket.emit('automatizacion-detenida');
+		// Actualización final
+		config.contador = prospectosCambiados;
+		fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 
-    } catch (error) {
-        console.error('❌ Error crítico:', error.message);
-        socket.emit('error-automatizacion', {
-            message: error.message,
-            etapa: error.etapa || 'general'
-        });
-    } finally {
-        if (browser) await browser.close();
-    }
+		console.log(`\n🎉 [${horaActual()}] Automatización completada! Total prospectos: ${prospectosCambiados}`);
+		socket.emit('automatizacion-detenida');
+
+	} catch (error) {
+		console.error(`\n❌ [${horaActual()}] Error crítico:`, error.message);
+		socket.emit('error-automatizacion', {
+			message: error.message,
+			etapa: error.etapa || 'general'
+		});
+	} finally {
+		if (browser) await browser.close();
+	}
 }

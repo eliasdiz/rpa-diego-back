@@ -189,6 +189,206 @@
 
 
 
+
+// import puppeteer from 'puppeteer-core';
+// import fs from 'fs';
+// import path from 'path';
+// import { fileURLToPath } from 'url';
+// import { format } from '@formkit/tempo';
+
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
+// const configPath = path.join(__dirname, '../config/config.json');
+
+// // Constantes
+// const SOLUCIONES_VALIDAS = [
+// 	'Plan vive',
+// 	'Salud familiar',
+// 	'Salud evoluciona familiar',
+// 	'Plan crédito protegido'
+// ];
+
+// // Función para hora actual (formato HH:MM:SS)
+// const horaActual = () => format(new Date(),{ time: 'short'})
+
+// const PROSPECTOS_URL = 'https://sura.lightning.force.com/lightning/o/Lead/list?filterName=Antioquia_PYF_Lead';
+
+// export async function automatizar(socket, setBrowser) {
+// 	let browser;
+// 	try {
+// 		// Leer configuración
+// 		const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+// 		const { email, passwordHash, cantidad, contador = 0 } = config;
+
+// 		// Validaciones iniciales
+// 		if (!email || !passwordHash) {
+// 			throw new Error('Credenciales no configuradas en config.json');
+// 		}
+
+// 		if (!cantidad || cantidad <= 0) {
+// 			throw new Error('Cantidad de prospectos no válida en config.json');
+// 		}
+
+// 		// 1. Iniciar navegador
+// 		browser = await puppeteer.connect({
+// 			browserURL: 'http://localhost:9222',
+// 			defaultViewport: null,
+// 		});
+// 		setBrowser(browser);
+// 		const page = await browser.newPage();
+
+
+
+// 		// 2. Navegar a prospectos
+// 		await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0' });
+// 		let prospectosCambiados = contador;
+
+// 		console.log(`🚀 Iniciando automatización para ${cantidad} prospectos...`,horaActual());
+
+// 		// 3. Bucle principal
+// 		while (prospectosCambiados < cantidad) {
+// 			// Recarga silenciosa
+// 			await page.reload({ waitUntil: 'networkidle0' });
+
+// 			const tablaLeads = await page.$('table[aria-label="Antioquia - PYF"]');
+// 			if (!tablaLeads) {
+// 				await new Promise(resolve => setTimeout(resolve, 5000));
+// 				continue;
+// 			}
+
+// 			const leads = await page.$$('table tbody tr');
+// 			let procesandoLead = false;
+
+// 			for (const lead of leads) {
+// 				try {
+// 					// 3.1 Validar estado (silencioso)
+// 					const estado = await lead.$eval(
+// 						'td[data-label="Estado de prospecto"] span',
+// 						el => el.textContent.trim()
+// 					).catch(() => '');
+
+// 					if (estado === 'Abierto') continue;
+
+// 					// 3.2 Procesar nuevo lead (aquí activamos los logs)
+// 					procesandoLead = true;
+// 					console.log(`\n🔍 [${horaActual()}] Analizando nuevo lead (${prospectosCambiados + 1}/${cantidad})...`);
+
+// 					// Abrir lead
+// 					const nombreLead = await lead.$('a.slds-truncate[href^="/lightning/r/"]');
+// 					if (!nombreLead) continue;
+
+// 					await Promise.all([
+// 						nombreLead.click(),
+// 						page.waitForNavigation({ waitUntil: 'networkidle0' }).catch(() => { })
+// 					]);
+
+// 					// 3.3 Validar botón cambio propietario (versión robusta)
+// 					const buttonChange = await page.waitForSelector('button[name="ChangeOwnerOne"]', { timeout: 3000 }).catch(() => null);
+
+// 					if (!buttonChange) {
+// 						console.log(`⚠️ [${horaActual()}] Botón no encontrado. Saltando lead...`);
+// 						socket.emit('error-automatizacion', {
+// 							message: 'Botón no encontrado',
+// 							etapa: 'validacion-boton'
+// 						});
+// 						continue;
+// 					}
+
+// 					// 3.4 Validar solución
+// 					const solucionTexto = await page.$eval(
+// 						'records-highlights-details-item p[title="Solución"] + p force-lookup a span',
+// 						el => el.textContent.trim()
+// 					).catch(() => '');
+
+// 					if (!SOLUCIONES_VALIDAS.includes(solucionTexto)) {
+// 						console.log(`❌ [${horaActual()}] Solución no válida: ${solucionTexto}`);
+// 						socket.emit('error-automatizacion', {
+// 							message: `Solución no válida: ${solucionTexto}`,
+// 							etapa: 'validacion-solucion'
+// 						});
+// 						continue;
+// 					}
+
+// 					// 3.5 Cambio de propietario (versión robusta)
+// 					console.log(`🔄 [${horaActual()}] Cambiando propietario...`);
+// 					await buttonChange.click().catch(() => null);
+
+// 					const modal = await page.waitForSelector('div[role="dialog"]', { timeout: 5000 }).catch(() => null);
+// 					if (modal) {
+// 						// Paso 1: Buscar usuario
+// 						const inputChange = await page.waitForSelector('input[title="Buscar Usuarios"]').catch(() => null);
+// 						await inputChange?.click();
+// 						await inputChange?.type('Diego Ignacio Alvarez Franco', { delay: 100 });
+
+// 						// Paso 2: Seleccionar usuario
+// 						const diego = await page.waitForSelector('div[title="Diego Ignacio Alvarez Franco"]').catch(() => null);
+// 						await diego?.click();
+
+// 						// Paso 3: Confirmar
+// 						const enviar = await page.waitForSelector('button[title="Enviar"]').catch(() => null);
+// 						await enviar?.click();
+
+// 						// Verificación de errores
+// 						await page.waitForTimeout(2000);
+// 						const modalError = await page.$('div[class="modalError"]');
+
+// 						if (modalError) {
+// 							const errorMsg = await page.$eval('.changeOwnerErrorMessage', el => el.textContent?.trim()).catch(() => 'Error desconocido');
+// 							console.log(`❌ [${horaActual()}] Error en cambio: ${errorMsg}`);
+// 							socket.emit('error-automatizacion', {
+// 								message: errorMsg,
+// 								etapa: 'cambio-propietario'
+// 							});
+// 						} else {
+// 							// Éxito
+// 							prospectosCambiados++;
+// 							console.log(`✅ [${horaActual()}] Cambio exitoso! Total: ${prospectosCambiados}`);
+// 							socket.emit('update-leads', { count: prospectosCambiados });
+// 						}
+// 					} else {
+// 						console.log(`⚠️ [${horaActual()}] Modal no apareció`);
+// 						socket.emit('error-automatizacion', {
+// 							message: 'Modal no apareció',
+// 							etapa: 'cambio-propietario'
+// 						});
+// 					}
+
+// 				} catch (error) {
+// 					console.error(`⚠️ [${horaActual()}] Error: ${error.message}`);
+// 					socket.emit('error-automatizacion', error);
+// 				} finally {
+// 					await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0' });
+// 				}
+
+// 				if (prospectosCambiados >= cantidad) break;
+// 			}
+
+// 			// Espera silenciosa si no se procesaron leads
+// 			if (!procesandoLead) {
+// 				await new Promise(resolve => setTimeout(resolve, 5000));
+// 			}
+// 		}
+
+// 		// Actualización final
+// 		config.contador = prospectosCambiados;
+// 		fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+// 		console.log(`\n🎉 [${horaActual()}] Automatización completada! Total prospectos: ${prospectosCambiados}`);
+// 		socket.emit('automatizacion-detenida');
+
+// 	} catch (error) {
+// 		console.error(`\n❌ [${horaActual()}] Error crítico:`, error.message);
+// 		socket.emit('error-automatizacion', {
+// 			message: error.message,
+// 			etapa: error.etapa || 'general'
+// 		});
+// 	} finally {
+// 		if (browser) await browser.close();
+// 	}
+// }
+
+
+
 import puppeteer from 'puppeteer-core';
 import fs from 'fs';
 import path from 'path';
@@ -204,7 +404,7 @@ const SOLUCIONES_VALIDAS = [
 	'Plan vive',
 	'Salud familiar',
 	'Salud evoluciona familiar',
-	'Plan crédito protegido'
+	'Plan credito protegido'
 ];
 
 // Función para hora actual (formato HH:MM:SS)
@@ -310,14 +510,11 @@ export async function automatizar(socket, setBrowser) {
 						el => el.textContent.trim()
 					).catch(() => '');
 
-					// Normalizar para comparación (minúsculas, sin espacios extras)
-					const solucionNormalizada = solucionTexto.toLowerCase().trim();
-					const solucionesValidasNormalizadas = SOLUCIONES_VALIDAS.map(s => s.toLowerCase().trim());
-
-					console.log(`ℹ️ [${horaActual()}] Solución encontrada: "${solucionTexto}"`);
+					const solucionNormalizada = solucionTexto.toLowerCase().trim(); // ← Este paso faltante
+					const solucionesValidasNormalizadas = SOLUCIONES_VALIDAS.map(s => s.toLowerCase().trim())
 
 					if (!solucionesValidasNormalizadas.includes(solucionNormalizada)) {
-						console.log(`❌ [${horaActual()}] Solución no válida: "${solucionTexto}" - Esperadas: ${SOLUCIONES_VALIDAS.join(', ')}`);
+						console.log(`❌ [${horaActual()}] Solución no válida: ${solucionTexto}`);
 						socket.emit('error-automatizacion', {
 							message: `Solución no válida: ${solucionTexto}`,
 							etapa: 'validacion-solucion'

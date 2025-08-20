@@ -282,14 +282,25 @@ export async function automatizar(socket, setBrowser) {
 					]);
 
 					// 3.3 Validar botón cambio propietario (versión robusta)
-					const buttonChange = await page.waitForSelector('button[name="ChangeOwnerOne"]', { timeout: 3000 }).catch(() => null);
+					
+					// const buttonChange = await page.waitForSelector('button[name="ChangeOwnerOne"]', { timeout: 3000 }).catch(() => null);
+
+					// if (!buttonChange) {
+					// 	console.log(`⚠️ [${horatual}] Botón no encontrado. Saltando lead...`);
+					// 	socket.emit('error-automatizacion', {
+					// 		message: 'Botón no encontrado',
+					// 		etapa: 'validacion-boton'
+					// 	});
+					// 	continue;
+					// }
+
+					const buttonChange = await page.waitForSelector('button[name="ChangeOwnerOne"]', {
+						timeout: 3000
+					}).catch(() => null);
 
 					if (!buttonChange) {
-						console.log(`⚠️ [${horatual}] Botón no encontrado. Saltando lead...`);
-						socket.emit('error-automatizacion', {
-							message: 'Botón no encontrado',
-							etapa: 'validacion-boton'
-						});
+						console.log(`⏩ [${horaActual()}] Lead no requiere cambio. Volviendo...`);
+						await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0' });
 						continue;
 					}
 
@@ -299,14 +310,22 @@ export async function automatizar(socket, setBrowser) {
 						el => el.textContent.trim()
 					).catch(() => '');
 
-					if (!SOLUCIONES_VALIDAS.includes(solucionTexto)) {
-						console.log(`❌ [${horaActual()}] Solución no válida: ${solucionTexto}`);
+					// Normalizar para comparación (minúsculas, sin espacios extras)
+					const solucionNormalizada = solucionTexto.toLowerCase().trim();
+					const solucionesValidasNormalizadas = SOLUCIONES_VALIDAS.map(s => s.toLowerCase().trim());
+
+					console.log(`ℹ️ [${horaActual()}] Solución encontrada: "${solucionTexto}"`);
+
+					if (!solucionesValidasNormalizadas.includes(solucionNormalizada)) {
+						console.log(`❌ [${horaActual()}] Solución no válida: "${solucionTexto}" - Esperadas: ${SOLUCIONES_VALIDAS.join(', ')}`);
 						socket.emit('error-automatizacion', {
 							message: `Solución no válida: ${solucionTexto}`,
 							etapa: 'validacion-solucion'
 						});
 						continue;
 					}
+
+					console.log(`✓ [${horaActual()}] Solución válida: "${solucionTexto}" - Procediendo con cambio...`);
 
 					// 3.5 Cambio de propietario (versión robusta)
 					console.log(`🔄 [${horaActual()}] Cambiando propietario...`);

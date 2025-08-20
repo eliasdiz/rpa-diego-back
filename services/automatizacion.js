@@ -194,6 +194,7 @@ import puppeteer from 'puppeteer-core';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { format } from '@formkit/tempo';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -206,6 +207,10 @@ const SOLUCIONES_VALIDAS = [
 	'Salud evoluciona familiar',
 	'Plan crédito protegido'
 ];
+
+// Función para hora actual (formato HH:MM:SS)
+const horaActual = () => format(new Date(),{ time: 'short'})
+
 const PROSPECTOS_URL = 'https://sura.lightning.force.com/lightning/o/Lead/list?filterName=Antioquia_PYF_Lead';
 
 export async function automatizar(socket, setBrowser) {
@@ -232,17 +237,13 @@ export async function automatizar(socket, setBrowser) {
 		setBrowser(browser);
 		const page = await browser.newPage();
 
-		// Función para hora actual (formato HH:MM:SS)
-		const horaActual = () => {
-			const fecha = new Date();
-			return fecha.toLocaleTimeString('es-CO', { hour12: false });
-		};
+
 
 		// 2. Navegar a prospectos
 		await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0' });
 		let prospectosCambiados = contador;
 
-		console.log(`🚀 Iniciando automatización para ${cantidad} prospectos...`);
+		console.log(`🚀 Iniciando automatización para ${cantidad} prospectos...`,horaActual());
 
 		// 3. Bucle principal
 		while (prospectosCambiados < cantidad) {
@@ -285,7 +286,7 @@ export async function automatizar(socket, setBrowser) {
 					const buttonChange = await page.waitForSelector('button[name="ChangeOwnerOne"]', { timeout: 3000 }).catch(() => null);
 
 					if (!buttonChange) {
-						console.log(`⚠️ [${horaActual()}] Botón no encontrado. Saltando lead...`);
+						console.log(`⚠️ [${horatual}] Botón no encontrado. Saltando lead...`);
 						socket.emit('error-automatizacion', {
 							message: 'Botón no encontrado',
 							etapa: 'validacion-boton'

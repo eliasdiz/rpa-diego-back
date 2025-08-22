@@ -99,21 +99,26 @@ export async function automatizar(socket, setBrowser) {
             let mostradoMensajeBusqueda = false;
             while (prospectosCambiados < cantidad) {
                 try {
-                    // Recarga silenciosa con manejo de errores
+                    // Recarga más rápida usando domcontentloaded
                     await page.reload({
-                        waitUntil: 'networkidle0',
+                        waitUntil: 'domcontentloaded', // Cambiado de 'networkidle0' a 'domcontentloaded'
                         timeout: CONFIG.navegacionTimeout
                     }).catch(() => {
-                        // Silenciar errores de recarga para mantener log limpio
+                        // Silenciar errores de recarga
                     });
 
-                    const tablaLeads = await page.$('table[aria-label="Antioquia - PYF"]');
+                    // Esperar solo por la tabla, no por toda la página
+                    const tablaLeads = await Promise.race([
+                        page.$('table'), // Selector genérico para cualquier tabla
+                        page.$('div.slds-table_header-fixed_container table'), // Estructura común en Salesforce
+                    ]);
+
                     if (!tablaLeads) {
                         if (!mostradoMensajeBusqueda) {
                             console.log(`🔍 [${horaActual()}] Buscando tabla de leads...`);
                             mostradoMensajeBusqueda = true;
                         }
-                        await esperar(5000);
+                        await esperar(3000); // Reducido de 5000 a 3000 ms
                         continue;
                     }
 
@@ -141,20 +146,32 @@ export async function automatizar(socket, setBrowser) {
                             console.log(`🔍 [${horaActual()}] Abriendo lead: ${nombreTexto}...`);
 
                             try {
-                                await Promise.all([
-                                    nombreLead.click(),
-                                    page.waitForNavigation({
-                                        waitUntil: 'networkidle0',
-                                        timeout: CONFIG.navegacionTimeout
-                                    })
-                                ]);
+                                // Hacer clic sin esperar navegación completa
+                                await nombreLead.click();
+                                
+                                // Esperar SOLO a que cambie la URL (esto es muy rápido)
+                                await page.waitForFunction(
+                                    'window.location.href.includes("/lightning/r/Lead/")', 
+                                    { timeout: 5000 }
+                                ).catch(() => {
+                                    console.log(`⚠️ [${horaActual()}] No se detectó cambio de URL, verificando...`);
+                                });
+                                
+                                // Pequeña pausa para permitir carga básica del DOM
+                                await esperar(1000);
+                                
+                                // Verificar si estamos en la página correcta
+                                const currentUrl = page.url();
+                                if (!currentUrl.includes('/lightning/r/Lead/')) {
+                                    console.log(`❌ [${horaActual()}] No se pudo navegar al lead: URL incorrecta`);
+                                    throw new Error('Fallo al abrir lead');
+                                }
+                                
+                                console.log(`✅ [${horaActual()}] Lead abierto correctamente`);
                             } catch (navError) {
                                 console.log(`⚠️ [${horaActual()}] Error en navegación: ${navError.message}`);
-                                // Verificar si la página cambió a pesar del error
-                                if (!(page.url()).includes('list?filterName=')) {
-                                    console.log(`🔄 [${horaActual()}] Continuando a pesar del error de navegación...`);
-                                } else {
-                                    // Si estamos todavía en la lista, saltamos este lead
+                                // Si estamos todavía en la lista, saltamos este lead
+                                if ((page.url()).includes('list?filterName=')) {
                                     throw new Error('Fallo al abrir lead');
                                 }
                             }
@@ -176,15 +193,21 @@ export async function automatizar(socket, setBrowser) {
                             }
 
                             // Evaluar la solución dentro del lead
+                            // Mejorar la detección de la solución usando el HTML exacto
                             const solucionTexto = await page.evaluate(() => {
-                                // Buscar en diferentes ubicaciones donde podría estar la solución
-                                const solucionLabel = Array.from(document.querySelectorAll('span.test-id__field-label, div.test-id__field-label'))
-                                    .find(el => el.textContent.includes('Solución'));
+                                // Búsqueda específica según la estructura compartida
+                                const solucionItem = Array.from(document.querySelectorAll('.slds-page-header__detail-block'))
+                                    .find(block => {
+                                        const title = block.querySelector('.slds-text-title');
+                                        return title && title.textContent.includes('Solución');
+                                    });
                                 
-                                if (solucionLabel) {
-                                    const solucionValue = solucionLabel.closest('div.slds-form-element')
-                                        ?.querySelector('span.test-id__field-value, div.test-id__field-value');
-                                    return solucionValue ? solucionValue.textContent.trim() : '';
+                                if (solucionItem) {
+                                    const solucionSpan = solucionItem.querySelector('force-lookup span.slds-truncate > span');
+                                    if (solucionSpan) return solucionSpan.textContent.trim();
+                                    
+                                    // Alternativa si no se encuentra la estructura exacta
+                                    return solucionItem.textContent.replace('Solución', '').trim();
                                 }
                                 return '';
                             }).catch(() => '');

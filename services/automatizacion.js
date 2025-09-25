@@ -17,11 +17,11 @@ const configPath = path.join(__dirname, '../config/config.json');
 function normalizarTexto(texto) {
     if (!texto) return '';
     return texto
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
+        .toLowerCase()           // convierte "SEGURO EXEQUIAL" a "seguro exequial"
+        .normalize('NFD')        // normaliza caracteres Unicode
+        .replace(/[\u0300-\u036f]/g, '') // elimina acentos
+        .replace(/\s+/g, ' ')   // reemplaza múltiples espacios por uno solo
+        .trim();                // elimina espacios al inicio y final
 }
 
 // Constantes
@@ -217,6 +217,7 @@ async function abrirLeadRobusto(page, lead, nombreTexto) {
     return exito;
 }
 
+/*
 // Función para extraer la solución directamente de la tabla de leads
 async function extraerSolucionDesdeTabla(lead) {
     try {
@@ -252,6 +253,7 @@ async function extraerSolucionDesdeTabla(lead) {
         return '';
     }
 }
+*/
 
 // Nueva función para extraer todos los datos de la tabla (sin usar console.table)
 async function extraerTodosLosDatosDeLaTabla(page) {
@@ -263,11 +265,11 @@ async function extraerTodosLosDatosDeLaTabla(page) {
         // Solo extraer nombres para mostrar en log
         for (let i = 0; i < filas.length; i++) {
             const fila = filas[i];
-            const nombre = await fila.$eval('a.slds-truncate[href^="/lightning/r/"]', 
+            const nombre = await fila.$eval('a.slds-truncate[href^="/lightning/r/"]',
                 el => el.textContent.trim()).catch(() => 'No disponible');
-            console.log(`👤 [${horaActual()}] Lead ${i+1}: "${nombre}"`);
+            console.log(`👤 [${horaActual()}] Lead ${i + 1}: "${nombre}"`);
         }
-        
+
         return true;
     } catch (error) {
         console.error(`❌ [${horaActual()}] Error al extraer datos de la tabla: ${error.message}`);
@@ -276,44 +278,124 @@ async function extraerTodosLosDatosDeLaTabla(page) {
 }
 
 // Reemplazar la estrategia actual por esta nueva función
+/*
 async function obtenerSolucionDesdePaginaDetalle(page) {
     try {
-        const solucionTexto = await page.evaluate(() => {
-            // Buscar el bloque de detalle de solución
-            const etiquetaSolucion = document.querySelector('p.slds-text-title[title="Solución"]');
-            if (!etiquetaSolucion) return '';
+        // 1. Esperar a que la página termine de cargar completamente
+        await esperar(3000);  // Espera inicial obligatoria
 
-            const bloqueDetalle = etiquetaSolucion.closest('.slds-page-header__detail-block');
-            if (!bloqueDetalle) return '';
+        // 2. Implementar múltiples intentos con espera incremental
+        let solucionTexto = '';
+        const maxIntentos = 5;
 
-            // Buscar el texto de la solución en los elementos hijos
-            // 1. Buscar el span anidado
-            const spanSolucion = bloqueDetalle.querySelector('span.slds-truncate, span[lwc-47ngqe6rvah]');
-            if (spanSolucion && spanSolucion.textContent) return spanSolucion.textContent.trim();
+        for (let intento = 1; intento <= maxIntentos; intento++) {
+            console.log(`🔍 [${horaActual()}] Intento ${intento} de extraer solución...`);
 
-            // 2. Buscar el enlace
-            const enlaceSolucion = bloqueDetalle.querySelector('a.slds-truncate');
-            if (enlaceSolucion && enlaceSolucion.textContent) return enlaceSolucion.textContent.trim();
+            // 3. Usar una estrategia de extracción más robusta
+            solucionTexto = await page.evaluate(() => {
+                // MÉTODO 1: Por selector estándar
+                const etiquetaSolucion = document.querySelector('p.slds-text-title[title="Solución"]');
+                if (etiquetaSolucion) {
+                    const bloqueDetalle = etiquetaSolucion.closest('.slds-page-header__detail-block');
+                    if (bloqueDetalle) {
+                        const span = bloqueDetalle.querySelector('span.slds-truncate');
+                        if (span && span.textContent) return span.textContent.trim();
 
-            // 3. Buscar cualquier texto dentro del bloque
-            const posibleTexto = bloqueDetalle.textContent;
-            if (posibleTexto) return posibleTexto.trim();
+                        const enlace = bloqueDetalle.querySelector('a.slds-truncate');
+                        if (enlace && enlace.textContent) return enlace.textContent.trim();
 
-            return '';
-        });
+                        if (bloqueDetalle.textContent) {
+                            // Extraer solo la parte después de "Solución"
+                            const texto = bloqueDetalle.textContent.trim();
+                            const match = texto.match(/Solución\s*(.*)/);
+                            return match ? match[1].trim() : texto;
+                        }
+                    }
+                }
 
-        console.log(`🔎 [${horaActual()}] Solución encontrada en página detalle: "${solucionTexto}"`);
+                // MÉTODO 2: Búsqueda más agresiva por texto
+                const todos = Array.from(document.querySelectorAll('*'));
+                for (const elem of todos) {
+                    if (elem.innerText && elem.innerText.includes('Solución:')) {
+                        return elem.innerText.split('Solución:')[1].trim();
+                    }
+                }
+
+                // MÉTODO 3: Buscar cualquier texto que parezca una solución válida
+                const posiblesSoluciones = ['Plan vive', 'Salud familiar', 'Salud evoluciona familiar',
+                    'Plan credito protegido', 'SEGURO EXEQUIAL'];
+
+                for (const solucion of posiblesSoluciones) {
+                    const elementos = Array.from(document.querySelectorAll('*'));
+                    for (const elem of elementos) {
+                        if (elem.innerText && elem.innerText.includes(solucion)) {
+                            return solucion;
+                        }
+                    }
+                }
+
+                return '';
+            });
+
+            // Si encontramos algo, detener los intentos
+            if (solucionTexto && solucionTexto.length > 0) {
+                console.log(`✅ [${horaActual()}] Solución encontrada en intento ${intento}: "${solucionTexto}"`);
+                break;
+            }
+
+            // Aumentar tiempo de espera en cada intento (espera progresiva)
+            await esperar(1000 * intento);
+        }
+
+        console.log(`🔎 [${horaActual()}] Solución final encontrada en página detalle: "${solucionTexto}"`);
         return solucionTexto;
     } catch (error) {
         console.log(`⚠️ [${horaActual()}] Error al extraer solución desde detalle: ${error.message}`);
         return '';
     }
 }
+*/
+
+// Modifica la función para procesar leads:
+// async function procesarLead(page, lead, nombreTexto) {
+//     // 1. Extraer la solución DIRECTAMENTE DE LA TABLA antes de abrir el lead
+//     const solucionTabla = await lead.evaluate(row => {
+//         // Buscar la celda con data-label="Solución"
+//         const celdaSolucion = Array.from(row.querySelectorAll('td')).find(
+//             celda => celda.getAttribute('data-label') === 'Solución'
+//         );
+
+//         if (celdaSolucion) {
+//             // Extraer el texto del span dentro del enlace
+//             const spanSolucion = celdaSolucion.querySelector('span[lwc-47ngqe6rvah]');
+//             if (spanSolucion) return spanSolucion.textContent.trim();
+
+//             // Alternativa: cualquier texto en la celda
+//             return celdaSolucion.textContent.trim();
+//         }
+//         return '';
+//     });
+
+//     console.log(`✅ [${horaActual()}] Solución extraída de tabla: "${solucionTabla}"`);
+
+//     // Evaluar si la solución es válida sin necesidad de abrir el lead
+//     if (!SOLUCIONES_VALIDAS.includes(solucionTabla)) {
+//         console.log(`⏩ [${horaActual()}] Lead con solución inválida (${solucionTabla}). Saltando...`);
+//         return false;
+//     }
+
+//     // 2. Solo abrir el lead si la solución es válida
+//     console.log(`🔍 [${horaActual()}] Solución válida. Abriendo lead: ${nombreTexto}...`);
+//     await abrirLeadRobusto(page, lead, nombreTexto);
+
+//     // Resto del proceso...
+// }
 
 export async function automatizar(socket, setBrowser) {
     let browser;
     let intentosConexion = 0;
     let leadsProcesados = 0; // Nuevo contador de leads procesados
+    let ultimoLeadProcesado = ""; // Variable para recordar el último lead procesado
 
     while (intentosConexion < CONFIG.maxReintentoConexion) {
         try {
@@ -366,16 +448,16 @@ export async function automatizar(socket, setBrowser) {
                     if (!procesandoLead) {
                         // Esperar explícitamente antes de recargar
                         await esperar(CONFIG.tiempoEntreRecargas);
-                        
+
                         // console.log(`🔄 [${horaActual()}] Recargando página de prospectos...`);
-                        
+
                         // Recarga más rápida usando domcontentloaded
                         await page.reload({
                             waitUntil: 'domcontentloaded',
                             timeout: CONFIG.navegacionTimeout
                         }).catch(() => { });
                     }
-                    
+
                     // Esperar solo por la tabla, no por toda la página
                     const tablaLeads = await Promise.race([
                         page.$('table tbody tr'),
@@ -418,36 +500,89 @@ export async function automatizar(socket, setBrowser) {
                             // Marcar que estamos procesando un lead - no recargará
                             procesandoLead = true;
 
-                            // Contar cada lead que entra al procesamiento
-                            leadsProcesados++;
-
                             // Extraer el nombre del lead para mostrar en log
                             const nombreTexto = await lead.$eval('a.slds-truncate[href^="/lightning/r/"]',
                                 el => el.textContent.trim()).catch(() => 'Lead sin nombre');
+
+                            // VERIFICACIÓN: Si el lead actual es igual al último procesado, lo saltamos
+                            if (nombreTexto === ultimoLeadProcesado) {
+                                console.log(`⏩ [${horaActual()}] Lead "${nombreTexto}" ya fue procesado. Saltando...`);
+                                procesandoLead = false;
+                                continue;
+                            }
+
+                            // Actualizar el nombre del último lead procesado
+                            ultimoLeadProcesado = nombreTexto;
+                            
+                            // Contar cada lead nuevo que entra al procesamiento
+                            leadsProcesados++;
 
                             console.log(`🔍 [${horaActual()}] Procesando lead: ${nombreTexto}... (Total procesados: ${leadsProcesados})`);
 
                             // Usar la función robusta que ya existe para abrir el lead
                             await abrirLeadRobusto(page, lead, nombreTexto);
 
-                            // AQUÍ AÑADIMOS LA EVALUACIÓN DE LA SOLUCIÓN
-                            console.log(`🔍 [${horaActual()}] Evaluando solución del lead...`);
-                            const solucionDetalle = await obtenerSolucionDesdePaginaDetalle(page);
-                            const solucionNormalizada = normalizarTexto(solucionDetalle);
+                            // --- Nueva lógica: buscar <p title="Solución"> y extraer span.slds-truncate > span ---
+                            console.log(`🔍 [${horaActual()}] Buscando p[title="Solución"] en la página de detalle...`);
 
-                            // Verificar si es una solución válida
+                            // Esperar un máximo razonable para que aparezca el <p> (no bloquear indefinidamente)
+                            let pSolucionExiste = false;
+                            try {
+                                // Intentar detectar el elemento sin lanzar excepción
+                                pSolucionExiste = await Promise.race([
+                                    page.$('p[title="Solución"]'),
+                                    new Promise(resolve => setTimeout(() => resolve(null), 5000))
+                                ])
+                                    .then(el => !!el)
+                                    .catch(() => false);
+                            } catch (e) {
+                                pSolucionExiste = false;
+                            }
+
+                            if (!pSolucionExiste) {
+                                console.log(`⚠️ [${horaActual()}] El lead parece estar vacío (sin <p title=\"Solución\"). Volviendo a prospectos...`);
+                                // Volver a la lista y continuar con el siguiente lead
+                                try {
+                                    await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0', timeout: CONFIG.navegacionTimeout });
+                                } catch (navErr) {
+                                    await page.goto(PROSPECTOS_URL, { timeout: 0 }).catch(() => {});
+                                }
+                                continue;
+                            }
+
+                            // Si existe, extraer el texto del span dentro de span.slds-truncate > span
+                            const solucionDetalle = await page.evaluate(() => {
+                                const p = document.querySelector('p[title="Solución"]');
+                                if (!p) return '';
+                                const itemPadre = p.closest('records-highlights-details-item') || p.closest('.slds-page-header__detail-block');
+                                const spanSolucion = itemPadre?.querySelector('span.slds-truncate > span');
+                                if (spanSolucion && spanSolucion.textContent) return spanSolucion.textContent.trim();
+                                // Fallbacks: intentar span.slds-truncate directamente o cualquier enlace
+                                const spanDirecto = itemPadre?.querySelector('span.slds-truncate');
+                                if (spanDirecto && spanDirecto.textContent) return spanDirecto.textContent.trim();
+                                const enlace = itemPadre?.querySelector('a.slds-truncate');
+                                if (enlace && enlace.textContent) return enlace.textContent.trim();
+                                return '';
+                            });
+
+                            const solucionNormalizada = normalizarTexto(solucionDetalle);
+                            console.log(`🔄 [${horaActual()}] Solución encontrada: "${solucionDetalle}" -> normalizada: "${solucionNormalizada}"`);
+
                             const esSolucionValida = SOLUCIONES_VALIDAS_NORMALIZADAS.includes(solucionNormalizada);
                             console.log(`${esSolucionValida ? '✅' : '❌'} [${horaActual()}] Solución "${solucionDetalle}" es ${esSolucionValida ? 'válida' : 'inválida'}`);
 
-                            // Solo proceder si la solución es válida
                             if (!esSolucionValida) {
-                                console.log(`⏩ [${horaActual()}] Lead con solución inválida. Volviendo...`);
-                                await page.goto(PROSPECTOS_URL, {
-                                    waitUntil: 'networkidle0',
-                                    timeout: CONFIG.navegacionTimeout
-                                });
+                                console.log(`⏩ [${horaActual()}] Solución no válida. Volviendo a prospectos y continuando búsqueda...`);
+                                try {
+                                    await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0', timeout: CONFIG.navegacionTimeout });
+                                } catch (navErr) {
+                                    await page.goto(PROSPECTOS_URL, { timeout: 0 }).catch(() => {});
+                                }
                                 continue;
                             }
+
+                            // Si llegamos aquí, la solución es válida
+                            console.log(`✅ [${horaActual()}] Solución válida encontrada. Procediendo con cambio de propietario...`);
 
                             // Buscar el botón para cambiar propietario
                             const buttonChange = await Promise.race([
@@ -457,14 +592,14 @@ export async function automatizar(socket, setBrowser) {
                             ]).catch(() => null);
 
                             if (!buttonChange) {
-                                console.log(`⏩ [${horaActual()}] Lead no requiere cambio. Volviendo...`);
-                                // Aquí falta el código para cambiar el propietario
-                                // ...
+                                console.log(`⚠️ [${horaActual()}] No se encontró botón de cambio de propietario`);
+                                // Continuar con la siguiente iteración
+                                continue;
                             }
 
-                            // Aquí agregarías la implementación del cambio de propietario
-                            // ...
-
+                            // Ejecutar el cambio de propietario
+                            console.log(`🔄 [${horaActual()}] Haciendo clic en botón de cambio de propietario...`);
+                            await buttonChange.click();
                         } catch (error) {
                             console.error(`⚠️ [${horaActual()}] Error en procesamiento de lead: ${error.message}`);
                             socket.emit('error-automatizacion', {
@@ -487,7 +622,7 @@ export async function automatizar(socket, setBrowser) {
                                 // Forzar la navegación incluso si hay timeout
                                 await page.goto(PROSPECTOS_URL, { timeout: 0 });
                             }
-                            
+
                             // Marcar que ya no estamos procesando un lead - podemos recargar
                             procesandoLead = false;
                         }

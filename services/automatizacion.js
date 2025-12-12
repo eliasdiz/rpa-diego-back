@@ -34,6 +34,7 @@ const SOLUCIONES_VALIDAS = [
 
 // Soluciones normalizadas para comparación
 const SOLUCIONES_VALIDAS_NORMALIZADAS = SOLUCIONES_VALIDAS.map(s => normalizarTexto(s));
+// console.log(SOLUCIONES_VALIDAS_NORMALIZADAS);
 
 // Función para hora actual (formato HH:MM:SS)
 const horaActual = () => format(new Date(), { time: 'medium' });
@@ -43,28 +44,46 @@ const PROSPECTOS_URL = 'https://sura.lightning.force.com/lightning/o/Lead/list?f
 
 // Configuración para tiempos de espera y reintentos
 const CONFIG = {
-    navegacionTimeout: 90000,      // Aumentado de 60s a 90s 
-    protocolTimeout: 120000,       // Aumentado de 60s a 120s
+    navegacionTimeout: 30000,      // Reducido a 30s para recargas más rápidas
+    protocolTimeout: 60000,        // Reducido a 60s 
     maxReintentoConexion: 3,
-    maxReintentosApertura: 3,      // NUEVO: Reintentos específicos para apertura de leads
+    maxReintentosApertura: 3,      // Reintentos específicos para apertura de leads
     tiempoEsperaEntreReintentos: 5000,
     tiempoEsperaEntreLeads: 3000,
-    tiempoEntreRecargas: 4000      // NUEVO: Tiempo explícito entre recargas de la página
+    tiempoEntreRecargas: 5000      // 5 segundos entre recargas
 };
 
 // Función robusta para abrir leads con múltiples estrategias y reintentos
 async function abrirLeadRobusto(page, lead, nombreTexto) {
     console.log(`🔍 [${horaActual()}] Abriendo lead: ${nombreTexto}...`);
-
-    // Extraer la URL del lead para navegación directa
+    // lead puede ser:
+    // - un ElementHandle que es un <tr> (fila)
+    // - un ElementHandle que es un <a> (anchor directo)
+    // - una string con la URL del lead
     let leadUrl = '';
+    let elementoTag = null;
     try {
-        leadUrl = await lead.$eval('a.slds-truncate[href^="/lightning/r/"]', el => el.getAttribute('href'));
-        // Asegurar que es una URL absoluta
-        if (leadUrl && !leadUrl.startsWith('http')) {
-            // Construir URL absoluta basada en la URL actual
-            const baseUrl = new URL(page.url()).origin;
-            leadUrl = `${baseUrl}${leadUrl}`;
+        if (typeof lead === 'string') {
+            leadUrl = lead;
+        } else {
+            // Determinar tag name del elemento
+            elementoTag = await page.evaluate(el => el && el.tagName ? el.tagName.toLowerCase() : null, lead).catch(() => null);
+            if (elementoTag === 'a') {
+                leadUrl = await lead.evaluate(el => el.getAttribute('href')).catch(() => null);
+            } else {
+                // Asumir que es una fila <tr> y buscar el anchor dentro
+                leadUrl = await lead.$eval('a.slds-truncate[href^="/lightning/r/"]', el => el.getAttribute('href')).catch(() => null);
+            }
+
+            // Construir URL absoluta si es relativa
+            if (leadUrl && !leadUrl.startsWith('http')) {
+                try {
+                    const baseUrl = new URL(page.url()).origin;
+                    leadUrl = `${baseUrl}${leadUrl}`;
+                } catch (uErr) {
+                    // Ignorar
+                }
+            }
         }
     } catch (err) {
         console.log(`⚠️ [${horaActual()}] No se pudo extraer URL del lead: ${err.message}`);
@@ -90,8 +109,9 @@ async function abrirLeadRobusto(page, lead, nombreTexto) {
                     )
                 ]);
             } else {
-                // Si no tenemos URL, saltar a estrategia 2
-                throw new Error('URL no disponible');
+                // Si no tenemos URL, intentaremos abrir haciendo click en el elemento
+                // (si es un anchor clickará directamente, si es una fila buscará el anchor dentro)
+                console.log(`🖱️ [${horaActual()}] URL no disponible — intentar clic directo en elemento`);
             }
 
             // Verificación rápida de URL
@@ -136,9 +156,15 @@ async function abrirLeadRobusto(page, lead, nombreTexto) {
 
                     if (!encontrado) throw new Error('Lead no encontrado en la lista');
                 } else {
-                    const nombreLead = await lead.$('a.slds-truncate[href^="/lightning/r/"]');
-                    if (nombreLead) await nombreLead.click();
-                    else throw new Error('Elemento de lead no encontrado');
+                    // Si el elemento es un <a>, hacer click directamente
+                    if (elementoTag === 'a') {
+                        await lead.click().catch(() => { throw new Error('No se pudo clickear el anchor'); });
+                    } else {
+                        // Intentar encontrar el anchor dentro de la fila
+                        const nombreLead = await lead.$('a.slds-truncate[href^="/lightning/r/"]');
+                        if (nombreLead) await nombreLead.click();
+                        else throw new Error('Elemento de lead no encontrado');
+                    }
                 }
 
                 // Esperar cambio de URL con timeout aumentado
@@ -278,83 +304,64 @@ async function extraerTodosLosDatosDeLaTabla(page) {
 }
 
 // Reemplazar la estrategia actual por esta nueva función
-/*
 async function obtenerSolucionDesdePaginaDetalle(page) {
     try {
-        // 1. Esperar a que la página termine de cargar completamente
-        await esperar(3000);  // Espera inicial obligatoria
+        // Esperar a que la página cargue completamente
+        await esperar(3000);
 
-        // 2. Implementar múltiples intentos con espera incremental
-        let solucionTexto = '';
-        const maxIntentos = 5;
+        const solucionTexto = await page.evaluate(() => {
+            // 1. PRIMERO buscar el p con title "Solución"
+            const pSolucion = Array.from(document.querySelectorAll('p')).find(p =>
+                p.getAttribute('title') === 'Solución'
+            );
 
-        for (let intento = 1; intento <= maxIntentos; intento++) {
-            console.log(`🔍 [${horaActual()}] Intento ${intento} de extraer solución...`);
-
-            // 3. Usar una estrategia de extracción más robusta
-            solucionTexto = await page.evaluate(() => {
-                // MÉTODO 1: Por selector estándar
-                const etiquetaSolucion = document.querySelector('p.slds-text-title[title="Solución"]');
-                if (etiquetaSolucion) {
-                    const bloqueDetalle = etiquetaSolucion.closest('.slds-page-header__detail-block');
-                    if (bloqueDetalle) {
-                        const span = bloqueDetalle.querySelector('span.slds-truncate');
-                        if (span && span.textContent) return span.textContent.trim();
-
-                        const enlace = bloqueDetalle.querySelector('a.slds-truncate');
-                        if (enlace && enlace.textContent) return enlace.textContent.trim();
-
-                        if (bloqueDetalle.textContent) {
-                            // Extraer solo la parte después de "Solución"
-                            const texto = bloqueDetalle.textContent.trim();
-                            const match = texto.match(/Solución\s*(.*)/);
-                            return match ? match[1].trim() : texto;
-                        }
-                    }
-                }
-
-                // MÉTODO 2: Búsqueda más agresiva por texto
-                const todos = Array.from(document.querySelectorAll('*'));
-                for (const elem of todos) {
-                    if (elem.innerText && elem.innerText.includes('Solución:')) {
-                        return elem.innerText.split('Solución:')[1].trim();
-                    }
-                }
-
-                // MÉTODO 3: Buscar cualquier texto que parezca una solución válida
-                const posiblesSoluciones = ['Plan vive', 'Salud familiar', 'Salud evoluciona familiar',
-                    'Plan credito protegido', 'SEGURO EXEQUIAL'];
-
-                for (const solucion of posiblesSoluciones) {
-                    const elementos = Array.from(document.querySelectorAll('*'));
-                    for (const elem of elementos) {
-                        if (elem.innerText && elem.innerText.includes(solucion)) {
-                            return solucion;
-                        }
-                    }
-                }
-
+            if (!pSolucion) {
+                console.log('No se encontró el campo Solución');
                 return '';
-            });
-
-            // Si encontramos algo, detener los intentos
-            if (solucionTexto && solucionTexto.length > 0) {
-                console.log(`✅ [${horaActual()}] Solución encontrada en intento ${intento}: "${solucionTexto}"`);
-                break;
             }
 
-            // Aumentar tiempo de espera en cada intento (espera progresiva)
-            await esperar(1000 * intento);
-        }
+            // 2. Subir al contenedor padre (records-highlights-details-item)
+            const contenedorSolucion = pSolucion.closest('records-highlights-details-item');
+            if (!contenedorSolucion) {
+                console.log('No se encontró el contenedor de la solución');
+                return '';
+            }
 
-        console.log(`🔎 [${horaActual()}] Solución final encontrada en página detalle: "${solucionTexto}"`);
+            // 3. Buscar el span con clase slds-truncate
+            const spanTruncate = contenedorSolucion.querySelector('span.slds-truncate');
+            if (!spanTruncate) {
+                console.log('No se encontró el span con clase slds-truncate');
+                return '';
+            }
+
+            // 4. Obtener el texto - intentar primero del span hijo directo
+            let texto = '';
+
+            // Buscar el primer span hijo que tenga texto
+            const spanHijo = spanTruncate.querySelector('span');
+            if (spanHijo && spanHijo.textContent && spanHijo.textContent.trim() !== '') {
+                texto = spanHijo.textContent.trim();
+            }
+            // Si no hay span hijo con texto, usar el texto del span padre
+            else if (spanTruncate.textContent && spanTruncate.textContent.trim() !== '') {
+                texto = spanTruncate.textContent.trim();
+            }
+            // Último recurso: usar innerText que captura texto visible
+            else if (spanTruncate.innerText && spanTruncate.innerText.trim() !== '') {
+                texto = spanTruncate.innerText.trim();
+            }
+
+            console.log('Texto de solución encontrado:', texto);
+            return texto;
+        });
+
+        console.log(`🔎 [${horaActual()}] Solución encontrada en página detalle: "${solucionTexto}"`);
         return solucionTexto;
     } catch (error) {
         console.log(`⚠️ [${horaActual()}] Error al extraer solución desde detalle: ${error.message}`);
         return '';
     }
 }
-*/
 
 // Modifica la función para procesar leads:
 // async function procesarLead(page, lead, nombreTexto) {
@@ -428,9 +435,9 @@ export async function automatizar(socket, setBrowser) {
             page.setDefaultNavigationTimeout(CONFIG.navegacionTimeout);
             page.setDefaultTimeout(CONFIG.navegacionTimeout);
 
-            // 2. Navegar a prospectos con manejo de errores
+            // 2. Navegar a prospectos con manejo de errores (usando domcontentloaded para más velocidad)
             await page.goto(PROSPECTOS_URL, {
-                waitUntil: 'networkidle0',
+                waitUntil: 'domcontentloaded',
                 timeout: CONFIG.navegacionTimeout
             });
 
@@ -440,195 +447,202 @@ export async function automatizar(socket, setBrowser) {
 
             // 3. Bucle principal con manejo de errores mejorado
             let mostradoMensajeBusqueda = false;
+            let primerLogBusqueda = true; // mostrar 'Buscando tabla...' solo una vez
             let procesandoLead = false; // Nueva bandera para controlar recargas
+            let lastSeenRowCount = 0; // cuenta de filas vistas la última vez
 
             while (prospectosCambiados < cantidad) {
                 try {
-                    // Solo recargamos si NO estamos procesando un lead actualmente
-                    if (!procesandoLead) {
-                        // Esperar explícitamente antes de recargar
-                        await esperar(CONFIG.tiempoEntreRecargas);
-
-                        // console.log(`🔄 [${horaActual()}] Recargando página de prospectos...`);
-
-                        // Recarga más rápida usando domcontentloaded
-                        await page.reload({
-                            waitUntil: 'domcontentloaded',
-                            timeout: CONFIG.navegacionTimeout
-                        }).catch(() => { });
+                    // Verificar si el frame está desconectado
+                    try {
+                        await page.evaluate(() => true);
+                    } catch (frameErr) {
+                        if (frameErr.message.includes('detached')) {
+                            console.log(`⚠️ [${horaActual()}] Frame desconectado, reconectando...`);
+                            await page.goto(PROSPECTOS_URL, {
+                                waitUntil: 'domcontentloaded',
+                                timeout: CONFIG.navegacionTimeout
+                            }).catch(() => { });
+                            await esperar(3000);
+                            continue;
+                        }
                     }
 
-                    // Esperar solo por la tabla, no por toda la página
-                    const tablaLeads = await Promise.race([
-                        page.$('table tbody tr'),
-                        page.$('div.slds-table_header-fixed_container table tbody tr'),
-                        new Promise(resolve => setTimeout(() => resolve(null), 5000))
-                    ]);
-
-                    // Si estamos procesando un lead, saltamos el resto del bucle
+                    // Si estamos procesando un lead, no recargamos
                     if (procesandoLead) {
                         await esperar(1000);
                         continue;
                     }
 
-                    // Extraer y mostrar todos los datos de la tabla
-                    if (tablaLeads) {
-                        console.log(`✅ [${horaActual()}] Tabla encontrada, extrayendo datos...`);
-                        await extraerTodosLosDatosDeLaTabla(page);
-                    }
+                    // Recargar la página cada 5 segundos, sin más verificaciones
+                    await page.reload().catch(() => { });
+                    await esperar(5000);
 
-                    if (!tablaLeads) {
-                        if (!mostradoMensajeBusqueda) {
-                            console.log(`🔍 [${horaActual()}] Buscando tabla con leads...`);
-                            mostradoMensajeBusqueda = true;
+                    // Marcar que estamos procesando un lead - no recargará
+                    procesandoLead = true;
+
+                    // Usar la nueva función para detectar y abrir automáticamente un lead
+                    console.log(`🔄 [${horaActual()}] Buscando lead disponible usando observador...`);
+                    try {
+                        const nombreTexto = await observarYHacerClicEnNuevosLeads(page);
+
+                        // VERIFICACIÓN: Si el lead actual es igual al último procesado, lo saltamos
+                        if (nombreTexto === ultimoLeadProcesado) {
+                            console.log(`⏩ [${horaActual()}] Lead "${nombreTexto}" ya fue procesado. Saltando...`);
+                            procesandoLead = false;
+
+                            // Volver a la lista de prospectos
+                            await page.goto(PROSPECTOS_URL, {
+                                waitUntil: 'domcontentloaded',
+                                timeout: CONFIG.navegacionTimeout
+                            }).catch(() => { });
+
+                            continue;
                         }
-                        await esperar(5000);
-                        continue;
-                    }
 
-                    // Selector robusto para la tabla de leads Salesforce
-                    const tabla = await page.$('table.slds-table_header-fixed');
-                    const leads = tabla
-                        ? await tabla.$$('tbody > tr')
-                        : [];
-                    console.log(`✅ [${horaActual()}] Encontrados ${leads.length} leads en la tabla`);
-                    mostradoMensajeBusqueda = false;
-                    console.log(`🔍 [${horaActual()}] Analizando nuevos leads (${prospectosCambiados + 1}/${cantidad})...`);
+                        // Actualizar el nombre del último lead procesado
+                        ultimoLeadProcesado = nombreTexto;
 
-                    for (const lead of leads) {
-                        try {
-                            // Marcar que estamos procesando un lead - no recargará
-                            procesandoLead = true;
+                        // Contar cada lead nuevo que entra al procesamiento
+                        leadsProcesados++;
 
-                            // Extraer el nombre del lead para mostrar en log
-                            const nombreTexto = await lead.$eval('a.slds-truncate[href^="/lightning/r/"]',
-                                el => el.textContent.trim()).catch(() => 'Lead sin nombre');
+                        console.log(`🔍 [${horaActual()}] Procesando lead: ${nombreTexto}... (Total procesados: ${leadsProcesados})`);
 
-                            // VERIFICACIÓN: Si el lead actual es igual al último procesado, lo saltamos
-                            if (nombreTexto === ultimoLeadProcesado) {
-                                console.log(`⏩ [${horaActual()}] Lead "${nombreTexto}" ya fue procesado. Saltando...`);
-                                procesandoLead = false;
-                                continue;
-                            }
+                        // Intentar extracción en orden: detalle -> sección de detalles del producto -> header
+                        console.log(`🔍 [${horaActual()}] Intentando extraer solución (primaria)`);
+                        let solucionDetalle = await obtenerSolucionDesdePaginaDetalle(page);
 
-                            // Actualizar el nombre del último lead procesado
-                            ultimoLeadProcesado = nombreTexto;
-                            
-                            // Contar cada lead nuevo que entra al procesamiento
-                            leadsProcesados++;
+                        if (!solucionDetalle || solucionDetalle.trim() === '') {
+                            console.log(`🔍 [${horaActual()}] Estrategia primaria no encontró solución. Probando detalles...`);
+                            solucionDetalle = await obtenerSolucionDesdeDetalles(page);
+                        }
 
-                            console.log(`🔍 [${horaActual()}] Procesando lead: ${nombreTexto}... (Total procesados: ${leadsProcesados})`);
+                        if (!solucionDetalle || solucionDetalle.trim() === '') {
+                            console.log(`🔁 [${horaActual()}] Estrategia de detalles no encontró solución. Probando header...`);
+                            solucionDetalle = await obtenerSolucionDesdeHeader(page);
+                        }
 
-                            // Usar la función robusta que ya existe para abrir el lead
-                            await abrirLeadRobusto(page, lead, nombreTexto);
+                        const solucionNormalizada = normalizarTexto(solucionDetalle);
+                        console.log(`🔄 [${horaActual()}] Solución encontrada (final): "${solucionDetalle}" -> normalizada: "${solucionNormalizada}"`);
 
-                            // --- Nueva lógica: buscar <p title="Solución"> y extraer span.slds-truncate > span ---
-                            console.log(`🔍 [${horaActual()}] Buscando p[title="Solución"] en la página de detalle...`);
+                        const esSolucionValida = SOLUCIONES_VALIDAS_NORMALIZADAS.includes(solucionNormalizada);
+                        console.log(esSolucionValida)
+                        console.log(`${esSolucionValida ? '✅' : '❌'} [${horaActual()}] Solución final es ${esSolucionValida ? 'válida' : 'inválida'}`);
 
-                            // Esperar un máximo razonable para que aparezca el <p> (no bloquear indefinidamente)
-                            let pSolucionExiste = false;
+                        if (!esSolucionValida) {
+                            console.log(`⏩ [${horaActual()}] Ninguna estrategia encontró una solución válida. Volviendo a prospectos...`);
                             try {
-                                // Intentar detectar el elemento sin lanzar excepción
-                                pSolucionExiste = await Promise.race([
-                                    page.$('p[title="Solución"]'),
-                                    new Promise(resolve => setTimeout(() => resolve(null), 5000))
-                                ])
-                                    .then(el => !!el)
-                                    .catch(() => false);
-                            } catch (e) {
-                                pSolucionExiste = false;
+                                await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0', timeout: CONFIG.navegacionTimeout });
+                            } catch (navErr) {
+                                await page.goto(PROSPECTOS_URL, { timeout: 0 }).catch(() => { });
                             }
+                            continue;
+                        }
 
-                            if (!pSolucionExiste) {
-                                console.log(`⚠️ [${horaActual()}] El lead parece estar vacío (sin <p title=\"Solución\"). Volviendo a prospectos...`);
-                                // Volver a la lista y continuar con el siguiente lead
-                                try {
-                                    await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0', timeout: CONFIG.navegacionTimeout });
-                                } catch (navErr) {
-                                    await page.goto(PROSPECTOS_URL, { timeout: 0 }).catch(() => {});
-                                }
-                                continue;
-                            }
+                        // Si llegamos aquí, la solución es válida
+                        console.log(`✅ [${horaActual()}] Solución válida encontrada. Procediendo con cambio de propietario...`);
 
-                            // Si existe, extraer el texto del span dentro de span.slds-truncate > span
-                            const solucionDetalle = await page.evaluate(() => {
-                                const p = document.querySelector('p[title="Solución"]');
-                                if (!p) return '';
-                                const itemPadre = p.closest('records-highlights-details-item') || p.closest('.slds-page-header__detail-block');
-                                const spanSolucion = itemPadre?.querySelector('span.slds-truncate > span');
-                                if (spanSolucion && spanSolucion.textContent) return spanSolucion.textContent.trim();
-                                // Fallbacks: intentar span.slds-truncate directamente o cualquier enlace
-                                const spanDirecto = itemPadre?.querySelector('span.slds-truncate');
-                                if (spanDirecto && spanDirecto.textContent) return spanDirecto.textContent.trim();
-                                const enlace = itemPadre?.querySelector('a.slds-truncate');
-                                if (enlace && enlace.textContent) return enlace.textContent.trim();
-                                return '';
-                            });
+                        // Buscar el botón para cambiar propietario
+                        const buttonChange = await Promise.race([
+                            page.waitForSelector('button[name="ChangeOwnerOne"]', { timeout: 3000 }),
+                            page.waitForSelector('div.none li:nth-of-type(1) button', { timeout: 3000 }),
+                            page.waitForSelector('button:has-span:contains("Cambiar propietario"))', { timeout: 3000 })
+                        ]).catch(() => null);
 
-                            const solucionNormalizada = normalizarTexto(solucionDetalle);
-                            console.log(`🔄 [${horaActual()}] Solución encontrada: "${solucionDetalle}" -> normalizada: "${solucionNormalizada}"`);
+                        if (!buttonChange) {
+                            console.log(`⚠️ [${horaActual()}] No se encontró botón de cambio de propietario`);
+                            // Continuar con la siguiente iteración
+                            continue;
+                        }
 
-                            const esSolucionValida = SOLUCIONES_VALIDAS_NORMALIZADAS.includes(solucionNormalizada);
-                            console.log(`${esSolucionValida ? '✅' : '❌'} [${horaActual()}] Solución "${solucionDetalle}" es ${esSolucionValida ? 'válida' : 'inválida'}`);
+                        // Ejecutar el cambio de propietario (flujo completo)
+                        console.log(`🔄 [${horaActual()}] Haciendo clic en botón de cambio de propietario...`);
+                        await buttonChange.click();
 
-                            if (!esSolucionValida) {
-                                console.log(`⏩ [${horaActual()}] Solución no válida. Volviendo a prospectos y continuando búsqueda...`);
-                                try {
-                                    await page.goto(PROSPECTOS_URL, { waitUntil: 'networkidle0', timeout: CONFIG.navegacionTimeout });
-                                } catch (navErr) {
-                                    await page.goto(PROSPECTOS_URL, { timeout: 0 }).catch(() => {});
-                                }
-                                continue;
-                            }
-
-                            // Si llegamos aquí, la solución es válida
-                            console.log(`✅ [${horaActual()}] Solución válida encontrada. Procediendo con cambio de propietario...`);
-
-                            // Buscar el botón para cambiar propietario
-                            const buttonChange = await Promise.race([
-                                page.waitForSelector('button[name="ChangeOwnerOne"]', { timeout: 3000 }),
-                                page.waitForSelector('div.none li:nth-of-type(1) button', { timeout: 3000 }),
-                                page.waitForSelector('button:has-span:contains("Cambiar propietario"))', { timeout: 3000 })
+                        // Intentar flujo completo dentro del modal
+                        try {
+                            // Esperar modal de cambio de propietario
+                            const modal = await Promise.race([
+                                page.waitForSelector('div[role="dialog"]', { timeout: 5000 }),
+                                new Promise(resolve => setTimeout(() => resolve(null), 5000))
                             ]).catch(() => null);
 
-                            if (!buttonChange) {
-                                console.log(`⚠️ [${horaActual()}] No se encontró botón de cambio de propietario`);
-                                // Continuar con la siguiente iteración
-                                continue;
-                            }
+                            if (!modal) {
+                                console.log(`⚠️ [${horaActual()}] No apareció el modal de cambio de propietario`);
+                            } else {
+                                // Buscar input para buscar usuarios
+                                const inputChange = await page.waitForSelector('input[title="Buscar Usuarios"]', { timeout: 4000 }).catch(() => null);
+                                if (inputChange) {
+                                    await inputChange.click().catch(() => { });
+                                    await esperar(500);
+                                }
 
-                            // Ejecutar el cambio de propietario
-                            console.log(`🔄 [${horaActual()}] Haciendo clic en botón de cambio de propietario...`);
-                            await buttonChange.click();
-                        } catch (error) {
-                            console.error(`⚠️ [${horaActual()}] Error en procesamiento de lead: ${error.message}`);
-                            socket.emit('error-automatizacion', {
-                                message: error.message,
-                                etapa: 'procesamiento-lead'
+                                // Seleccionar usuario específico (Diego Ignacio Alvarez Franco)
+                                const usuarioDiego = await page.waitForSelector('div[title="Diego Ignacio Alvarez Franco"]', { timeout: 4000 }).catch(() => null);
+                                if (usuarioDiego) {
+                                    await usuarioDiego.click().catch(() => { });
+                                    await esperar(500);
+                                } else {
+                                    console.log(`⚠️ [${horaActual()}] No se encontró el usuario objetivo en la lista`);
+                                }
+
+                                // Botón enviar/guardar
+                                const enviar = await page.waitForSelector('button[title="Enviar"]', { timeout: 4000 }).catch(() => null);
+                                if (enviar) {
+                                    await enviar.click().catch(() => { });
+                                    // Esperar breve para que el cambio se procese
+                                    await esperar(1500);
+
+                                    // Detectar posible error en modal
+                                    const modalErrorElem = await page.$('.modalError');
+                                    const modalError = !!modalErrorElem;
+                                    if (modalError) {
+                                        const errorMessageElement = await page.$('.changeOwnerErrorMessage');
+                                        const errorMessage = errorMessageElement ? await page.evaluate(el => el.textContent, errorMessageElement) : 'Error desconocido';
+                                        console.log(`❌ [${horaActual()}] Error al cambiar propietario: ${errorMessage}`);
+                                        socket.emit('error-automatizacion', { message: errorMessage, etapa: 'cambio-propietario' });
+                                    } else {
+                                        // Asumimos éxito si no hay modalError
+                                        prospectosCambiados++;
+                                        console.log(`✅ [${horaActual()}] Cambio de propietario realizado. Prospectos cambiados: ${prospectosCambiados}`);
+                                        socket.emit('prospecto-cambiado', { nombre: nombreTexto, total: prospectosCambiados });
+                                    }
+                                } else {
+                                    console.log(`⚠️ [${horaActual()}] Botón 'Enviar' no encontrado en modal`);
+                                }
+                            }
+                        } catch (errCambio) {
+                            console.error(`⚠️ [${horaActual()}] Error durante flujo de cambio de propietario: ${errCambio.message}`);
+                            socket.emit('error-automatizacion', { message: errCambio.message, etapa: 'cambio-propietario' });
+                        }
+                    } catch (error) {
+                        console.error(`⚠️ [${horaActual()}] Error en procesamiento de lead: ${error.message}`);
+                        socket.emit('error-automatizacion', {
+                            message: error.message,
+                            etapa: 'procesamiento-lead'
+                        });
+                    } finally {
+                        // Pausa para reducir carga
+                        await esperar(CONFIG.tiempoEsperaEntreLeads);
+
+                        // Siempre volver a la lista
+                        try {
+                            console.log(`🔙 [${horaActual()}] Volviendo a la lista de prospectos...`);
+                            await page.goto(PROSPECTOS_URL, {
+                                waitUntil: 'networkidle0',
+                                timeout: CONFIG.navegacionTimeout
                             });
-                        } finally {
-                            // Pausa para reducir carga
-                            await esperar(CONFIG.tiempoEsperaEntreLeads);
-
-                            // Siempre volver a la lista
-                            try {
-                                console.log(`🔙 [${horaActual()}] Volviendo a la lista de prospectos...`);
-                                await page.goto(PROSPECTOS_URL, {
-                                    waitUntil: 'networkidle0',
-                                    timeout: CONFIG.navegacionTimeout
-                                });
-                            } catch (navError) {
-                                // Silenciar errores de navegación
-                                // Forzar la navegación incluso si hay timeout
-                                await page.goto(PROSPECTOS_URL, { timeout: 0 });
-                            }
-
-                            // Marcar que ya no estamos procesando un lead - podemos recargar
-                            procesandoLead = false;
+                        } catch (navError) {
+                            // Silenciar errores de navegación
+                            // Forzar la navegación incluso si hay timeout
+                            await page.goto(PROSPECTOS_URL, { timeout: 0 });
                         }
 
-                        if (prospectosCambiados >= cantidad) break;
+                        // Marcar que ya no estamos procesando un lead - podemos recargar
+                        procesandoLead = false;
                     }
+
+                    if (prospectosCambiados >= cantidad) break;
                 } catch (error) {
                     // Manejo de error del bucle principal
                     console.error(`⚠️ [${horaActual()}] Error en bucle principal: ${error.message}`);
@@ -680,4 +694,491 @@ export async function automatizar(socket, setBrowser) {
     // Si llegamos aquí, todos los intentos fallaron
     console.error(`\n❌ [${horaActual()}] Automatización fallida después de ${CONFIG.maxReintentoConexion} intentos`);
     socket.emit('automatizacion-detenida', { error: 'Falló después de múltiples intentos' });
+}
+
+// Estrategia alternativa: obtener solución desde la sección de detalles del producto
+async function obtenerSolucionDesdeDetalles(page) {
+    try {
+        return await page.evaluate(() => {
+            // 1. Buscar el enlace del producto
+            const enlaceProducto = document.querySelector('a[href^="/lightning/r/Product2/"]');
+            if (!enlaceProducto) return '';
+
+            // 2. Buscar TODOS los spans dentro del enlace
+            const spansEnEnlace = enlaceProducto.querySelectorAll('span');
+
+            // 3. Encontrar el span que tenga innerText no vacío
+            for (const span of spansEnEnlace) {
+                const texto = span.innerText.trim();
+                if (texto !== '') {
+                    return texto;
+                }
+            }
+
+            return '';
+        });
+    } catch (error) {
+        console.log(`⚠️ Error en estrategia detalles: ${error.message}`);
+        return '';
+    }
+}
+
+// Estrategia alternativa: obtener solución desde el header/records-highlights
+async function obtenerSolucionDesdeHeader(page) {
+    try {
+        return await page.evaluate(() => {
+            // 1. Buscar el p con title "Solución"
+            const pSolucion = Array.from(document.querySelectorAll('p')).find(p =>
+                p.getAttribute('title') === 'Solución'
+            );
+
+            if (!pSolucion) return '';
+
+            // 2. Subir al contenedor padre
+            const contenedorPadre = pSolucion.closest('records-highlights-details-item');
+            if (!contenedorPadre) return '';
+
+            // 3. Buscar todos los spans dentro del contenedor
+            const todosLosSpans = contenedorPadre.querySelectorAll('span');
+
+            // 4. Encontrar el span que tenga innerText no vacío
+            for (const span of todosLosSpans) {
+                const texto = span.innerText.trim();
+                if (texto !== '') {
+                    return texto;
+                }
+            }
+
+            return '';
+        });
+    } catch (error) {
+        console.log(`⚠️ Error en estrategia header: ${error.message}`);
+        return '';
+    }
+}
+
+// Esperar a que la lista de leads sea visible: versión optimizada
+async function esperarAListaVisible(page, timeout = 2000) {
+    const start = Date.now();
+
+    // Helper: comprobar si hay overlays o error visibles - versión rápida
+    const hayOverlayOError = await page.evaluate(() => {
+        const loading = document.querySelector('#auraLoadingBox, .oneLoadingBox, #spinner-container');
+        const error = document.querySelector('#auraErrorMask, .auraErrorBox');
+        // Versión simplificada de la verificación de visibilidad
+        return !!(loading || error);
+    }).catch(() => true);
+
+    while ((Date.now() - start) < timeout) {
+        // Si hay overlay o error, esperar y reintentar
+        if (hayOverlayOError) {
+            await esperar(1000);
+            // re-evaluar
+            const siguiente = await page.evaluate(() => {
+                const loading = document.querySelector('#auraLoadingBox') || document.querySelector('.oneLoadingBox') || document.querySelector('#spinner-container');
+                const error = document.querySelector('#auraErrorMask') || document.querySelector('.auraErrorBox');
+                const visible = el => el && window.getComputedStyle(el).display !== 'none' && window.getComputedStyle(el).visibility !== 'hidden';
+                return (loading && visible(loading)) || (error && visible(error));
+            }).catch(() => true);
+            if (!siguiente) return true;
+            hayOverlayOError = siguiente;
+        }
+
+        // Comprobar si existen filas o anchors de leads
+        const existeTabla = await page.evaluate(() => {
+            if (document.querySelector('table tbody tr')) return true;
+            if (document.querySelector('a.slds-truncate[href^="/lightning/r/"]')) return true;
+            return false;
+        }).catch(() => false);
+
+        if (existeTabla) return true;
+
+        // Si no hay, esperar un poco y reintentar
+        await esperar(800);
+    }
+
+    return false;
+}
+
+// Esperar por la aparición de nuevas filas en la tabla (usa MutationObserver en el contexto del navegador)
+async function esperarPorNuevoLead(page, ultimoCuenta = 0, timeout = 20000) {
+    return await page.evaluate((ultimoCuenta, timeout) => {
+        return new Promise(resolve => {
+            try {
+                const selectorTabla = 'div.slds-table_header-fixed_container table, table.slds-table_header-fixed';
+                const tabla = document.querySelector(selectorTabla);
+                const obtenerCuenta = () => {
+                    const t = document.querySelector(selectorTabla);
+                    if (!t) return 0;
+                    const tb = t.querySelectorAll('tbody > tr');
+                    if (tb && tb.length) return tb.length;
+                    // fallback a atributo data-num-rows
+                    const v = t.getAttribute('data-num-rows');
+                    return v ? parseInt(v, 10) : 0;
+                };
+
+                // Si ya hay más filas que ultimoCuenta, resolvemos inmediatamente
+                const actual = obtenerCuenta();
+                if (actual > ultimoCuenta) return resolve({ found: true, count: actual });
+
+                // Si no existe la tabla aún, observamos el contenedor principal
+                const contenedor = document.querySelector('div.slds-table_header-fixed_container') || document.querySelector('div.slds-scrollable_y') || document.body;
+
+                const observer = new MutationObserver(() => {
+                    const nueva = obtenerCuenta();
+                    if (nueva > ultimoCuenta) {
+                        observer.disconnect();
+                        return resolve({ found: true, count: nueva });
+                    }
+                });
+
+                observer.observe(contenedor, { childList: true, subtree: true });
+
+                // Timeout fallback
+                setTimeout(() => {
+                    try { observer.disconnect(); } catch (e) { }
+                    const ultima = obtenerCuenta();
+                    resolve({ found: ultima > ultimoCuenta, count: ultima });
+                }, timeout);
+            } catch (e) {
+                resolve({ found: false, count: 0 });
+            }
+        });
+    }, ultimoCuenta, timeout).catch(() => ({ found: false, count: 0 }));
+}
+
+// Nueva función para detectar y abrir leads automáticamente usando MutationObserver
+async function observarYHacerClicEnNuevosLeads(page) {
+    console.log(`🔍 [${horaActual()}] Iniciando observación automática de nuevos leads...`);
+
+    try {
+        const nombreLead = await page.evaluate(() => {
+            return new Promise((resolve, reject) => {
+                console.log('🔍 Iniciando observación de nuevos leads...');
+
+                // Configurar MutationObserver
+                const observer = new MutationObserver((mutations) => {
+                    // Verificar si ya existe algún lead disponible
+                    const verificarLeadsExistentes = () => {
+                        // Buscar tabla de leads por diferentes selectores
+                        const tbody = document.querySelector('tbody[data-rowgroup-body]');
+                        if (tbody) {
+                            const filas = tbody.querySelectorAll('tr.slds-hint-parent');
+                            if (filas && filas.length > 0) {
+                                console.log(`✅ Se encontraron ${filas.length} leads existentes`);
+                                buscarYHacerClicEnPrimerLead(tbody);
+                                return true;
+                            }
+                        }
+
+                        // Buscar enlaces de leads directamente
+                        const enlaces = document.querySelectorAll('a[href^="/lightning/r/00Q"], a[href^="/lightning/r/Lead/"]');
+                        if (enlaces && enlaces.length > 0) {
+                            console.log(`✅ Se encontraron ${enlaces.length} enlaces a leads`);
+                            const leadEncontrado = Array.from(enlaces).find(enlace => {
+                                const contenedor = enlace.closest('tr') || enlace.closest('.slds-card');
+                                if (contenedor) {
+                                    buscarYHacerClicEnLead(contenedor);
+                                    return true;
+                                }
+                                return false;
+                            });
+
+                            if (leadEncontrado) return true;
+                        }
+                        
+                        return false;
+                    };
+
+                    // Verificar primero si hay leads existentes
+                    if (verificarLeadsExistentes()) return;
+
+                    // Si no hay leads existentes, analizar las mutaciones
+                    for (const mutation of mutations) {
+                        // Verificar si se añadió el tbody
+                        if (mutation.type === 'childList') {
+                            for (const node of mutation.addedNodes) {
+                                // Caso 1: Se añadió el tbody completo
+                                if (node.nodeType === 1 && node.getAttribute && node.getAttribute('data-rowgroup-body')) {
+                                    console.log('✅ tbody detectado - hay leads disponibles');
+                                    buscarYHacerClicEnPrimerLead(node);
+                                    return;
+                                }
+
+                                // Caso 2: Se añadieron nuevas filas dentro del tbody existente
+                                if (node.nodeType === 1 && node.tagName === 'TR' &&
+                                    node.classList && node.classList.contains('slds-hint-parent')) {
+                                    console.log('✅ Nueva fila de lead detectada');
+                                    buscarYHacerClicEnLead(node);
+                                    return;
+                                }
+                                
+                                // Caso 3: Se añadió otro tipo de elemento que podría contener leads
+                                if (node.nodeType === 1 && node.querySelectorAll) {
+                                    // Buscar dentro del nodo añadido si hay alguna tabla o enlaces de leads
+                                    const tbody = node.querySelector('tbody[data-rowgroup-body]');
+                                    if (tbody) {
+                                        console.log('✅ tbody detectado dentro de un nuevo elemento');
+                                        buscarYHacerClicEnPrimerLead(tbody);
+                                        return;
+                                    }
+                                    
+                                    const enlaces = node.querySelectorAll('a[href^="/lightning/r/00Q"], a[href^="/lightning/r/Lead/"]');
+                                    if (enlaces && enlaces.length > 0) {
+                                        console.log(`✅ Se encontraron ${enlaces.length} enlaces a leads en nuevo elemento`);
+                                        const leadEncontrado = Array.from(enlaces).find(enlace => {
+                                            const contenedor = enlace.closest('tr') || enlace.closest('.slds-card');
+                                            if (contenedor) {
+                                                buscarYHacerClicEnLead(contenedor);
+                                                return true;
+                                            }
+                                            return false;
+                                        });
+                                        if (leadEncontrado) return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // Función para buscar y hacer clic en el primer lead del tbody
+                function buscarYHacerClicEnPrimerLead(tbody) {
+                    const primeraFila = tbody.querySelector('tr.slds-hint-parent');
+                    if (primeraFila) {
+                        buscarYHacerClicEnLead(primeraFila);
+                    } else {
+                        console.log('⚠️ tbody vacío - esperando filas...');
+                        // Observar el tbody para nuevas filas
+                        observer.observe(tbody, {
+                            childList: true,
+                            subtree: false
+                        });
+                    }
+                }
+
+                // Función para buscar y hacer clic en el enlace del nombre del lead
+                function buscarYHacerClicEnLead(filaLead) {
+                    // Arreglo de selectores para encontrar enlaces en diferentes formatos
+                    const selectoresEnlaces = [
+                        'a.slds-truncate[href^="/lightning/r/00Q"]',
+                        'a.slds-truncate[href^="/lightning/r/Lead/"]',
+                        'a[href^="/lightning/r/00Q"]', 
+                        'a[href^="/lightning/r/Lead"]',
+                        'a[href*="Lead/"]',
+                        'a[title*="Lead"]',
+                        'a.slds-truncate'
+                    ];
+                    
+                    // 1. Buscar el force-lookup que contiene el enlace del nombre
+                    const forceLookup = filaLead.querySelector('force-lookup');
+                    if (forceLookup) {
+                        // Intentar todos los selectores
+                        for (const selector of selectoresEnlaces) {
+                            const enlaceNombre = forceLookup.querySelector(selector);
+                            if (enlaceNombre) {
+                                const nombreLead = enlaceNombre.textContent.trim();
+                                console.log(`🎯 Lead encontrado (selector: ${selector}): "${nombreLead}" - Haciendo clic...`);
+                                
+                                try {
+                                    // Hacer clic en el enlace
+                                    enlaceNombre.click();
+                                    
+                                    // Desconectar observer y resolver
+                                    observer.disconnect();
+                                    resolve(nombreLead);
+                                    return;
+                                } catch (err) {
+                                    console.log(`⚠️ Error al hacer clic: ${err.message}`);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 2. Buscar directamente en la fila usando todos los selectores
+                    for (const selector of selectoresEnlaces) {
+                        const enlaceDirecto = filaLead.querySelector(selector);
+                        if (enlaceDirecto) {
+                            const nombreLead = enlaceDirecto.textContent.trim();
+                            console.log(`🎯 Lead encontrado (selector directo: ${selector}): "${nombreLead}" - Haciendo clic...`);
+                            
+                            try {
+                                enlaceDirecto.click();
+                                observer.disconnect();
+                                resolve(nombreLead);
+                                return;
+                            } catch (err) {
+                                console.log(`⚠️ Error al hacer clic: ${err.message}`);
+                            }
+                        }
+                    }
+                    
+                    // 3. Buscar cualquier elemento que parezca un lead
+                    const elementosPosibles = filaLead.querySelectorAll('a, span, div');
+                    for (const elem of elementosPosibles) {
+                        const texto = elem.textContent.trim();
+                        // Buscar elementos que parezcan contener un nombre de lead
+                        if ((texto.includes(' ') || texto.length > 8) && elem.tagName === 'A') {
+                            console.log(`🎯 Posible lead encontrado por texto: "${texto}" - Intentando clic...`);
+                            try {
+                                elem.click();
+                                observer.disconnect();
+                                resolve(texto);
+                                return;
+                            } catch (err) {
+                                console.log(`⚠️ Error al hacer clic: ${err.message}`);
+                            }
+                        }
+                    }
+                    
+                    console.log('⚠️ No se pudo encontrar el enlace del lead');
+                }
+
+                // Verificar si el tbody ya existe al inicio
+                const tbodyExistente = document.querySelector('tbody[data-rowgroup-body]');
+                if (tbodyExistente) {
+                    console.log('✅ tbody ya existe - buscando leads...');
+                    buscarYHacerClicEnPrimerLead(tbodyExistente);
+                } else {
+                    console.log('⏳ Esperando a que aparezca tbody...');
+                    // Observar el contenedor padre (table) para cuando aparezca el tbody
+                    const tablaContenedora = document.querySelector('table') ||
+                        document.querySelector('.slds-table') ||
+                        document.querySelector('.slds-table_header-fixed_container') ||
+                        document.querySelector('.slds-card__body') ||
+                        document.querySelector('.slds-grid');
+
+                    if (tablaContenedora) {
+                        console.log('✅ Encontrada estructura contenedora - observando cambios...');
+                        observer.observe(tablaContenedora, {
+                            childList: true,
+                            subtree: true // Cambio a true para detectar cambios más profundos
+                        });
+                    } else {
+                        // Si no encuentra ninguna tabla, observar el cuerpo del documento para detectar cambios
+                        console.log('⚠️ No se encontró tabla contenedora - observando el documento completo');
+                        observer.observe(document.body, {
+                            childList: true,
+                            subtree: true
+                        });
+                        
+                        // También intentar observar cuando aparezca el contenedor de la aplicación
+                        const checkForContainer = setInterval(() => {
+                            const container = document.querySelector('.slds-table') || 
+                                             document.querySelector('.slds-card__body') ||
+                                             document.querySelector('#brandBand_2');
+                            
+                            if (container) {
+                                clearInterval(checkForContainer);
+                                console.log('✅ Contenedor encontrado posteriormente - reasignando observador');
+                                observer.disconnect();
+                                observer.observe(container, {
+                                    childList: true,
+                                    subtree: true
+                                });
+                            }
+                        }, 1000); // Comprobar cada segundo
+                    }
+                }
+
+                // Timeout de seguridad (aumentado a 45 segundos)
+                setTimeout(() => {
+                    // Antes de fallar, hacer un último intento de buscar leads en toda la página
+                    console.log('⚠️ Se alcanzó el tiempo límite - haciendo último intento de búsqueda...');
+                    
+                    // Buscar cualquier enlace que parezca un lead
+                    const todosLosEnlaces = document.querySelectorAll('a[href*="/lightning/r/"]');
+                    
+                    if (todosLosEnlaces && todosLosEnlaces.length > 0) {
+                        console.log(`✅ Encontrados ${todosLosEnlaces.length} posibles enlaces en último intento`);
+                        
+                        // Filtrar los enlaces que parezcan leads
+                        const posiblesLeads = Array.from(todosLosEnlaces).filter(enlace => 
+                            enlace.href.includes('/Lead/') || 
+                            enlace.href.includes('/00Q') ||
+                            (enlace.textContent && enlace.textContent.trim().length > 0 && enlace.textContent.includes(' '))
+                        );
+                        
+                        if (posiblesLeads.length > 0) {
+                            const enlace = posiblesLeads[0];
+                            const nombreLead = enlace.textContent.trim() || 'Lead sin nombre';
+                            console.log(`🎯 Lead encontrado en último intento: "${nombreLead}" - Haciendo clic...`);
+                            
+                            try {
+                                enlace.click();
+                                observer.disconnect();
+                                resolve(nombreLead);
+                                return;
+                            } catch (err) {
+                                console.log(`⚠️ Error al hacer clic en último intento: ${err.message}`);
+                            }
+                        }
+                    }
+                    
+                    // Si no funciona el último intento, intentar navegar a la vista de leads
+                    try {
+                        // Buscar el enlace "Leads" en la navegación
+                        const enlacesNavegacion = document.querySelectorAll('a');
+                        const enlaceLista = Array.from(enlacesNavegacion).find(a => 
+                            a.textContent && a.textContent.toLowerCase().includes('lead') && 
+                            !a.href.includes('/lightning/r/') // Excluir enlaces a leads específicos
+                        );
+                        
+                        if (enlaceLista) {
+                            console.log('🔄 Intentando navegar a la lista de leads...');
+                            enlaceLista.click();
+                            
+                            // Dar algo de tiempo para que cargue la página y resolver con mensaje especial
+                            setTimeout(() => {
+                                observer.disconnect();
+                                resolve('__NAVEGADO_A_LISTA__'); // Valor especial para indicar que se navegó a la lista
+                            }, 2000);
+                            return;
+                        }
+                    } catch (err) {
+                        console.log(`⚠️ Error al intentar navegar a la lista: ${err.message}`);
+                    }
+                    
+                    // Si todo falla, rechazar con error
+                    observer.disconnect();
+                    reject(new Error('Timeout: No se detectaron nuevos leads en 45 segundos'));
+                }, 45000);
+            });
+        });
+        
+        // Verificar si se recibió el valor especial que indica navegación a la lista
+        if (nombreLead === '__NAVEGADO_A_LISTA__') {
+            console.log(`🔄 [${horaActual()}] Navegado a la lista de leads - intentando nuevamente...`);
+            await esperar(2000); // Esperar a que la página cargue
+            // Recursivamente llamar a la función otra vez para intentar encontrar leads en la nueva página
+            return await observarYHacerClicEnNuevosLeads(page);
+        }
+        
+        console.log(`✅ [${horaActual()}] Lead detectado y abierto: "${nombreLead}"`);
+        await esperar(2000); // Esperar a que la página del lead cargue completamente
+        return nombreLead;
+    } catch (error) {
+        console.log(`❌ [${horaActual()}] Error al observar y hacer clic en leads: ${error.message}`);
+        
+        // Si el error es porque no encontró la tabla, intentar refrescar la página y reintentar
+        if (error.message.includes('No se encontró la tabla contenedora') || 
+            error.message.includes('Timeout: No se detectaron nuevos leads')) {
+            console.log(`🔄 [${horaActual()}] Intentando refrescar la página y reintentar...`);
+            
+            try {
+                // Intentar navegar a la lista de leads (URL relativa)
+                await page.goto('/lightning/o/Lead/list', { waitUntil: 'networkidle0' });
+                console.log(`🔄 [${horaActual()}] Página refrescada - esperando 3 segundos...`);
+                await esperar(3000); // Dar tiempo a que cargue la página
+                
+                // Reintentar la operación
+                return await observarYHacerClicEnNuevosLeads(page);
+            } catch (refreshError) {
+                console.log(`❌ [${horaActual()}] Error al refrescar la página: ${refreshError.message}`);
+                throw error; // Mantener el error original
+            }
+        }
+        
+        throw error;
+    }
 }
